@@ -220,7 +220,7 @@ variable "kube_vip_address" {
 variable "kube_vip_hostname" {
   description = "DNS hostname for K3s API TLS SAN"
   type        = string
-  default     = "k3s-test.jnet.lan"
+  default     = "k3s-stage.jnet.lan"
 }
 
 variable "mac_prefix" {

@@ -14,7 +14,7 @@ The repository supports independent lifecycles for **STAGE** and **PROD** cluste
 | :--- | :--- | :--- |
 | **Proxmox VE Host** | `guardian.jnet.lan` | `colossus.jnet.lan` |
 | **Control Plane VIP** | `192.168.0.43` | `192.168.0.44` |
-| **DNS Endpoint** | `k3s-stage.jnet.lan` / `k3s-test.jnet.lan` | `k3s-prod.jnet.lan` |
+| **DNS Endpoint** | `k3s-stage.jnet.lan` | `k3s-prod.jnet.lan` |
 | **Node Naming Pattern**| `k3s-cp-s-<rand>` / `k3s-wk-s-<rand>` | `k3s-cp-p-<rand>` / `k3s-wk-p-<rand>` |
 | **Internal Cluster VLAN**| VLAN `20` (`10.20.20.0/24`) | VLAN `30` (`10.30.30.0/24`) |
 | **VM ID Range (CP)** | `2001 - 2003` (3 nodes) | `3001 - 3003` (3 nodes) |

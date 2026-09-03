@@ -32,7 +32,6 @@ k3s_api_endpoint: "https://{{ kube_vip_address }}:{{ k3s_api_port }}"
 # TLS SANs for Kubernetes API Server
 k3s_tls_sans:
   - "192.168.0.43"
-  - "k3s-test.jnet.lan"
   - "k3s-stage.jnet.lan"
   - "k3s.jnet.lan"
   - "guardian"

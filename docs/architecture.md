@@ -67,7 +67,7 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 - **Fault Tolerance**: Quorum requires $\lfloor 3/2 \rfloor + 1 = 2$ healthy nodes. The cluster survives the loss of **1 control plane node** without downtime or degraded write availability.
 
 ### 3.2. kube-vip Control Plane Load Balancing
-- **Stage Virtual IP (VIP)**: `192.168.0.43` (FQDN: `k3s-stage.jnet.lan` / `k3s-test.jnet.lan`).
+- **Stage Virtual IP (VIP)**: `192.168.0.43` (FQDN: `k3s-stage.jnet.lan`).
 - **Prod Virtual IP (VIP)**: `192.168.0.44` (FQDN: `k3s-prod.jnet.lan`).
 - **Operation**: Managed by **kube-vip** running as a static pod / DaemonSet with leader election across the control plane nodes.
 - **Failover**: If the current leader control plane node fails, kube-vip automatically re-assigns the VIP to a surviving control plane node via Gratuitous ARP within seconds.

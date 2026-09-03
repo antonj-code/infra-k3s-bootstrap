@@ -143,7 +143,7 @@ variable "kube_vip_address" {
 }
 variable "kube_vip_hostname" {
   type        = string
-  default     = "k3s-test.jnet.lan"
+  default     = "k3s-stage.jnet.lan"
 }
 variable "mac_prefix" {
   type        = string
