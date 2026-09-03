@@ -413,9 +413,9 @@ prod:k3s:verify:
       export KUBECONFIG="${CI_PROJECT_DIR}/credentials/prod/kubeconfig.yaml"
       kubectl get nodes -o wide
       READY_NODES=$(kubectl get nodes --no-headers | grep -c " Ready " || true)
-      echo "Total Ready Nodes (Prod): ${READY_NODES}/6"
-      if [ "${READY_NODES}" -lt 6 ]; then
-        echo "ERROR: Expected 6 Ready nodes."
+      echo "Total Ready Nodes (Prod): ${READY_NODES}/8"
+      if [ "${READY_NODES}" -lt 8 ]; then
+        echo "ERROR: Expected 8 Ready nodes (3 Control Plane + 5 Workers)."
         exit 1
       fi
   rules:

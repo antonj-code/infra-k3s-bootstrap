@@ -17,8 +17,8 @@ The repository supports independent lifecycles for **STAGE** and **PROD** cluste
 | **DNS Endpoint** | `k3s-stage.jnet.lan` / `k3s-test.jnet.lan` | `k3s-prod.jnet.lan` |
 | **Node Naming Pattern**| `k3s-cp-s-<rand>` / `k3s-wk-s-<rand>` | `k3s-cp-p-<rand>` / `k3s-wk-p-<rand>` |
 | **Internal Cluster VLAN**| VLAN `20` (`10.20.20.0/24`) | VLAN `30` (`10.30.30.0/24`) |
-| **VM ID Range (CP)** | `2001 - 2003` | `3001 - 3003` |
-| **VM ID Range (Worker)**| `2011 - 2013` | `3011 - 3013` |
+| **VM ID Range (CP)** | `2001 - 2003` (3 nodes) | `3001 - 3003` (3 nodes) |
+| **VM ID Range (Worker)**| `2011 - 2013` (3 nodes) | `3011 - 3015` (5 nodes) |
 | **Control Plane Sizing**| 2 vCPU / 4GB RAM / 32+20GB Disk | 4 vCPU / 8GB RAM / 50+30GB Disk |
 | **Worker Node Sizing** | 4 vCPU / 4GB RAM / 32+50GB Disk | 8 vCPU / 16GB RAM / 50+100GB Disk |
 | **Vault Secret Path** | `secret/data/k3s-stage/*` | `secret/data/k3s-prod/*` |
