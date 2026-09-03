@@ -139,7 +139,7 @@ variable "template_registry" {
 variable "template_vm_id" {
   description = "Fallback default Proxmox VM ID for the CIS Level 2 AlmaLinux 9 template"
   type        = number
-  default     = 1000
+  default     = 1001
 }
 
 variable "ci_user" {

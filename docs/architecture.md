@@ -10,7 +10,7 @@ The infrastructure spans two dedicated Proxmox VE hypervisor hosts with strict e
 - **STAGE Deployment Target (`guardian.jnet.lan`)**: Dedicated hypervisor hosting all 6 virtual machines for the STAGE environment.
 - **PROD Deployment Target (`colossus.jnet.lan`)**: Dedicated hypervisor hosting all 6 virtual machines for the PROD environment.
 
-All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2 Template (VM ID: `1000` / `1001`)** with a dual-NIC architecture:
+All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2 Template (VM ID: `1001`, version: `1.1.0`)** with a dual-NIC architecture:
 1. **Management Network (`net0`)**: Connected to `vmbr0` (`192.168.0.0/24`), dynamically assigned via Cloud-Init DHCP. Used for external API access, SSH administration, CI/CD runner access, and kube-vip Virtual IPs.
 2. **Internal Cluster Network (`net1`)**: Connected to `vmbr0` with VLAN tagging (VLAN `20` for Stage, VLAN `30` for Prod). Static IP assignments are used for high-performance intra-cluster traffic (etcd quorum, kubelet, and Flannel CNI).
 

@@ -83,7 +83,7 @@ variable "template_registry" {
 }
 variable "template_vm_id" {
   type        = number
-  default     = 1000
+  default     = 1001
 }
 variable "ci_user" {
   type        = string
