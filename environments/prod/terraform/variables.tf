@@ -26,7 +26,7 @@ variable "pve_host_2_node_name" {
 }
 variable "pve_endpoint" {
   type        = string
-  default     = "https://guardian.jnet.lan:8006/"
+  default     = "https://colossus.jnet.lan:8006/"
 }
 variable "pve_api_token" {
   type        = string
@@ -35,7 +35,7 @@ variable "pve_api_token" {
 }
 variable "pve_node_name" {
   type        = string
-  default     = "guardian"
+  default     = "colossus"
 }
 variable "proxmox_insecure" {
   type        = bool

@@ -1,7 +1,6 @@
-# Proxmox Host 1 Provider (colossus.jnet.lan)
+# Proxmox Host 1 Provider (colossus.jnet.lan) - Default for PROD
 provider "proxmox" {
-  alias     = "pve1"
-  endpoint  = var.pve_host_1_endpoint
+  endpoint  = var.pve_host_1_endpoint != "" ? var.pve_host_1_endpoint : (var.pve_endpoint != "" ? var.pve_endpoint : "https://colossus.jnet.lan:8006/")
   api_token = var.pve_host_1_api_token != "" ? var.pve_host_1_api_token : (var.pve_api_token != "" ? var.pve_api_token : "dummy")
   insecure  = var.proxmox_insecure
 
@@ -10,9 +9,10 @@ provider "proxmox" {
   }
 }
 
-# Proxmox Host 2 Provider (guardian.jnet.lan) - Default
+# Proxmox Host 2 Provider (guardian.jnet.lan) - Secondary / Alias
 provider "proxmox" {
-  endpoint  = var.pve_host_2_endpoint != "" ? var.pve_host_2_endpoint : var.pve_endpoint
+  alias     = "pve2"
+  endpoint  = var.pve_host_2_endpoint != "" ? var.pve_host_2_endpoint : "https://guardian.jnet.lan:8006/"
   api_token = var.pve_host_2_api_token != "" ? var.pve_host_2_api_token : (var.pve_api_token != "" ? var.pve_api_token : "dummy")
   insecure  = var.proxmox_insecure
 

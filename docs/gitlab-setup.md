@@ -127,7 +127,7 @@ When a merge request or push to `main` is triggered:
    - `stage:k3s:verify` (validates all 6 stage nodes report `Ready`)
 3. **Prod Pipeline (`*:prod`)**:
    - `prod:terraform:plan` (manual trigger on `main`)
-   - `prod:terraform:apply` (manual trigger: provisions VMs 3001-3013 on `guardian`)
-   - `prod:ansible:configure` (manual trigger: deploys K3s HA cluster with VIP `192.168.0.42`)
+   - `prod:terraform:apply` (manual trigger: provisions VMs 3001-3013 on `colossus`)
+   - `prod:ansible:configure` (manual trigger: deploys K3s HA cluster on `colossus` with VIP `192.168.0.42`)
    - `prod:k3s:verify` (manual trigger: validates all 6 prod nodes report `Ready`)
 

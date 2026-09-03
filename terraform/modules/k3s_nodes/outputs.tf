@@ -56,7 +56,7 @@ all:
               ansible_host: ${try(element(local.management_ips[vm.name], 0), vm.name)}
               k3s_internal_ip: ${var.internal_network_prefix}.${var.control_plane_internal_ip_start + (vm.vm_id - var.control_plane_vmid_start)}
               k3s_node_id: ${vm.vm_id}
-              pve_host: ${var.pve_host_2_node_name}
+              pve_host: ${vm.node_name}
               node_role: control-plane
               k3s_node_type: management
               monitoring_group: control-plane
@@ -70,7 +70,7 @@ all:
               ansible_host: ${try(element(local.management_ips[vm.name], 0), vm.name)}
               k3s_internal_ip: ${var.internal_network_prefix}.${var.worker_internal_ip_start + (vm.vm_id - var.worker_vmid_start)}
               k3s_node_id: ${vm.vm_id}
-              pve_host: ${var.pve_host_2_node_name}
+              pve_host: ${vm.node_name}
               node_role: worker
               k3s_node_type: compute
               monitoring_group: worker

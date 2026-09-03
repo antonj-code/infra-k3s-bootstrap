@@ -3,7 +3,7 @@
 # End-to-End Orchestration: OS Hardening & K3s High Availability Cluster Rollout
 # ==============================================================================
 
-# --- Step 0: Ensure all 6 VMs on guardian are online and reachable via SSH ---
+# --- Step 0: Ensure all 6 VMs on target hypervisor (guardian/colossus) are online ---
 # any_errors_fatal here so an unreachable node (e.g. inventory holding the
 # unroutable internal VLAN IP instead of the management address) aborts the
 # run immediately, instead of Ansible dropping it from later plays and

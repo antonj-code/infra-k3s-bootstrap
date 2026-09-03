@@ -116,6 +116,9 @@ CREDS_PAYLOAD=$(jq -n \
     --arg h2_ep "${PVE_HOST_2_ENDPOINT}" \
     --arg h2_tok "${PVE_HOST_2_API_TOKEN}" \
     --arg h2_node "${PVE_HOST_2_NODE_NAME}" \
+    --arg target_ep "$([ "${ENV}" == "prod" ] && echo "${PVE_HOST_1_ENDPOINT}" || echo "${PVE_HOST_2_ENDPOINT}")" \
+    --arg target_tok "$([ "${ENV}" == "prod" ] && echo "${PVE_HOST_1_API_TOKEN}" || echo "${PVE_HOST_2_API_TOKEN}")" \
+    --arg target_node "$([ "${ENV}" == "prod" ] && echo "${PVE_HOST_1_NODE_NAME}" || echo "${PVE_HOST_2_NODE_NAME}")" \
     --arg pub "${SSH_PUB_KEY}" \
     --arg priv "${SSH_PRIV_KEY}" \
     '{
@@ -125,9 +128,9 @@ CREDS_PAYLOAD=$(jq -n \
         pve_host_2_endpoint: $h2_ep,
         pve_host_2_api_token: $h2_tok,
         pve_host_2_node_name: $h2_node,
-        pve_endpoint: $h2_ep,
-        pve_api_token: $h2_tok,
-        pve_node_name: $h2_node,
+        pve_endpoint: $target_ep,
+        pve_api_token: $target_tok,
+        pve_node_name: $target_node,
         ssh_public_key: $pub,
         ssh_private_key: $priv
     }')

@@ -19,7 +19,7 @@ k3s_node_labels:
   - "monitoring.jnet.lan/group=control-plane"
   - "monitoring.jnet.lan/tier=infrastructure"
   - "topology.kubernetes.io/region=homelab"
-  - "topology.kubernetes.io/zone=guardian"
+  - "topology.kubernetes.io/zone=colossus"
 
 
 # Kubernetes Node Taints for dedicated Control Plane separation

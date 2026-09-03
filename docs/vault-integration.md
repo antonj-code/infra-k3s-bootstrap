@@ -116,7 +116,7 @@ vault kv put -mount=secret k3s-stage/bootstrap \
   kube_vip_address="192.168.0.41" \
   kube_vip_hostname="k3s-stage.jnet.lan"
 
-# 3. Store SSH Deployment Keys & Proxmox Tokens
+# 3. Store Stage Credentials (targeting guardian)
 vault kv put -mount=secret k3s-stage/credentials \
   pve_host_1_endpoint="https://colossus.jnet.lan:8006/" \
   pve_host_1_api_token="terraform-ci@pve!gitlab-runner=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
@@ -126,8 +126,23 @@ vault kv put -mount=secret k3s-stage/credentials \
   pve_host_2_node_name="guardian" \
   pve_endpoint="https://guardian.jnet.lan:8006/" \
   pve_api_token="terraform-ci@pve!gitlab-runner=yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy" \
+  pve_node_name="guardian" \
   ssh_public_key="$(cat ~/.ssh/k3s_stage_deploy_key.pub)" \
   ssh_private_key="$(cat ~/.ssh/k3s_stage_deploy_key)"
+
+# 4. Store Prod Credentials (targeting colossus)
+vault kv put -mount=secret k3s-prod/credentials \
+  pve_host_1_endpoint="https://colossus.jnet.lan:8006/" \
+  pve_host_1_api_token="terraform-ci@pve!gitlab-runner=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
+  pve_host_1_node_name="colossus" \
+  pve_host_2_endpoint="https://guardian.jnet.lan:8006/" \
+  pve_host_2_api_token="terraform-ci@pve!gitlab-runner=yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy" \
+  pve_host_2_node_name="guardian" \
+  pve_endpoint="https://colossus.jnet.lan:8006/" \
+  pve_api_token="terraform-ci@pve!gitlab-runner=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
+  pve_node_name="colossus" \
+  ssh_public_key="$(cat ~/.ssh/k3s_prod_deploy_key.pub)" \
+  ssh_private_key="$(cat ~/.ssh/k3s_prod_deploy_key)"
 ```
 
 ---

@@ -34,8 +34,8 @@ k3s_tls_sans:
   - "192.168.0.42"
   - "k3s-prod.jnet.lan"
   - "k3s.jnet.lan"
-  - "guardian"
-  - "guardian.jnet.lan"
+  - "colossus"
+  - "colossus.jnet.lan"
   - "127.0.0.1"
   - "localhost"
 

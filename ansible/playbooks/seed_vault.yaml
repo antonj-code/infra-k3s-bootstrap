@@ -17,9 +17,9 @@
     pve_host_1_node_name: "{{ lookup('env', 'PVE_HOST_1_NODE_NAME') | default(lookup('env', 'TF_VAR_pve_host_1_node_name') | default('colossus', true), true) }}"
     pve_host_2_endpoint: "{{ lookup('env', 'PVE_HOST_2_ENDPOINT') | default(lookup('env', 'TF_VAR_pve_host_2_endpoint') | default('https://guardian.jnet.lan:8006/', true), true) }}"
     pve_host_2_api_token: "{{ lookup('env', 'PVE_HOST_2_API_TOKEN') | default(lookup('env', 'TF_VAR_pve_host_2_api_token') | default(lookup('env', 'PVE_API_TOKEN') | default(lookup('env', 'TF_VAR_pve_api_token'), true), true), true) }}"
-    pve_host_2_node_name: "{{ lookup('env', 'PVE_HOST_2_NODE_NAME') | default(lookup('env', 'TF_VAR_pve_host_2_node_name') | default('guardian', true), true) }}"
-    pve_endpoint: "{{ lookup('env', 'PVE_ENDPOINT') | default('https://guardian.jnet.lan:8006/', true) }}"
-    pve_api_token: "{{ lookup('env', 'PVE_API_TOKEN') | default(pve_host_2_api_token, true) }}"
+    pve_endpoint: "{{ pve_host_1_endpoint if target_env == 'prod' else pve_host_2_endpoint }}"
+    pve_api_token: "{{ pve_host_1_api_token if target_env == 'prod' else pve_host_2_api_token }}"
+    pve_node_name: "{{ pve_host_1_node_name if target_env == 'prod' else pve_host_2_node_name }}"
     default_vip: "{{ '192.168.0.42' if target_env == 'prod' else '192.168.0.41' }}"
     default_hostname: "{{ 'k3s-prod.jnet.lan' if target_env == 'prod' else 'k3s-stage.jnet.lan' }}"
 

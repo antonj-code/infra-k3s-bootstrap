@@ -6,43 +6,35 @@ This document outlines the architecture, hardware layout, networking topology, O
 
 ## 1. Physical & Virtual Topology
 
-The homelab infrastructure spans two dedicated Proxmox VE hypervisor hosts:
-- **Primary Deployment Target (`guardian.jnet.lan`)**: Primary host hosting all initial virtual machines for STAGE and PROD clusters.
-- **Secondary Host (`colossus.jnet.lan`)**: Hypervisor host configured and ready for multi-host cluster expansion and failover workloads.
+The infrastructure spans two dedicated Proxmox VE hypervisor hosts with strict environment isolation:
+- **STAGE Deployment Target (`guardian.jnet.lan`)**: Dedicated hypervisor hosting all 6 virtual machines for the STAGE environment.
+- **PROD Deployment Target (`colossus.jnet.lan`)**: Dedicated hypervisor hosting all 6 virtual machines for the PROD environment.
 
 All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2 Template (VM ID: `1000` / `1001`)** with a dual-NIC architecture:
 1. **Management Network (`net0`)**: Connected to `vmbr0` (`192.168.0.0/24`), dynamically assigned via Cloud-Init DHCP. Used for external API access, SSH administration, CI/CD runner access, and kube-vip Virtual IPs.
 2. **Internal Cluster Network (`net1`)**: Connected to `vmbr0` with VLAN tagging (VLAN `20` for Stage, VLAN `30` for Prod). Static IP assignments are used for high-performance intra-cluster traffic (etcd quorum, kubelet, and Flannel CNI).
 
-### Topology Diagram (Stage: VLAN 20 / Prod: VLAN 30)
+### Topology Diagram (Stage on `guardian` / Prod on `colossus`)
 
 ```
 +---------------------------------------------------------------------------------------------------+
-|                                  Proxmox VE Host: guardian.jnet.lan                               |
+|  STAGE CLUSTER (Proxmox VE Host: guardian.jnet.lan)                                              |
 |                                                                                                   |
-|  +---------------------------------------------------------------------------------------------+  |
-|  |                     Control Plane Nodes (HA Embedded etcd Quorum, N=3)                      |  |
-|  |  +-----------------------+   +-----------------------+   +-------------------------------+  |  |
-|  |  |   k3s-cp-<s|p>-XXXX   |   |   k3s-cp-<s|p>-YYYY   |   |       k3s-cp-<s|p>-ZZZZ       |  |  |
-|  |  | Stage: VM 2001 (10.20.20.11) | Stage: VM 2002 (10.20.20.12) | Stage: VM 2003 (10.20.20.13) |  |
-|  |  | Prod:  VM 3001 (10.30.30.11) | Prod:  VM 3002 (10.30.30.12) | Prod:  VM 3003 (10.30.30.13) |  |
-|  |  | net0: DHCP (192.168.0.x)| net0: DHCP (192.168.0.x)| net0: DHCP (192.168.0.x)      |  |  |
-|  |  +-----------+-----------+   +-----------+-----------+   +---------------+---------------+  |  |
-|  +--------------|---------------------------|-------------------------------|------------------+  |
-|                 +---------------------------+-------------------------------+                     |
-|                                             | Embedded etcd Consensus                             |
-|  +---------------------------------------------------------------------------------------------+  |
-|  |                                      Worker Nodes                                           |  |
-|  |  +-----------------------+   +-----------------------+   +-------------------------------+  |  |
-|  |  |   k3s-wk-<s|p>-AAAA   |   |   k3s-wk-<s|p>-BBBB   |   |       k3s-wk-<s|p>-CCCC       |  |  |
-|  |  | Stage: VM 2011 (10.20.20.21) | Stage: VM 2012 (10.20.20.22) | Stage: VM 2013 (10.20.20.23) |  |
-|  |  | Prod:  VM 3011 (10.30.30.21) | Prod:  VM 3012 (10.30.30.22) | Prod:  VM 3013 (10.30.30.23) |  |
-|  |  | net0: DHCP (192.168.0.x)| net0: DHCP (192.168.0.x)| net0: DHCP (192.168.0.x)      |  |  |
-|  |  +-----------------------+   +-----------------------+   +-------------------------------+  |  |
-|  +---------------------------------------------------------------------------------------------+  |
+|  Control Plane Nodes (HA Embedded etcd, N=3)           Worker Nodes (Workloads & Longhorn CSI)    |
+|  • k3s-cp-s-XXXX (VM 2001, net1: 10.20.20.11)          • k3s-wk-s-AAAA (VM 2011, net1: 10.20.20.21)|
+|  • k3s-cp-s-YYYY (VM 2002, net1: 10.20.20.12)          • k3s-wk-s-BBBB (VM 2012, net1: 10.20.20.22)|
+|  • k3s-cp-s-ZZZZ (VM 2003, net1: 10.20.20.13)          • k3s-wk-s-CCCC (VM 2013, net1: 10.20.20.23)|
 |                                                                                                   |
-|  Management (net0): vmbr0 | Gateway: 192.168.0.1 | DNS: 192.168.0.168, 192.168.0.127 | jnet.lan    |
-|  Stage Internal (net1): VLAN 20 (10.20.20.0/24) | Prod Internal (net1): VLAN 30 (10.30.30.0/24)   |
+|  VIP: 192.168.0.41 (k3s-stage.jnet.lan) | net0: DHCP (192.168.0.0/24) | net1: VLAN 20 (10.20.20.0/24) |
++---------------------------------------------------------------------------------------------------+
+|  PROD CLUSTER (Proxmox VE Host: colossus.jnet.lan)                                               |
+|                                                                                                   |
+|  Control Plane Nodes (HA Embedded etcd, N=3)           Worker Nodes (Workloads & Longhorn CSI)    |
+|  • k3s-cp-p-XXXX (VM 3001, net1: 10.30.30.11)          • k3s-wk-p-AAAA (VM 3011, net1: 10.30.30.21)|
+|  • k3s-cp-p-YYYY (VM 3002, net1: 10.30.30.12)          • k3s-wk-p-BBBB (VM 3012, net1: 10.30.30.22)|
+|  • k3s-cp-p-ZZZZ (VM 3003, net1: 10.30.30.13)          • k3s-wk-p-CCCC (VM 3013, net1: 10.30.30.23)|
+|                                                                                                   |
+|  VIP: 192.168.0.42 (k3s-prod.jnet.lan)  | net0: DHCP (192.168.0.0/24) | net1: VLAN 30 (10.30.30.0/24) |
 +---------------------------------------------------------------------------------------------------+
 ```
 
@@ -50,19 +42,19 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 
 ## 2. Resource Allocation Matrix
 
-### STAGE Environment
+### STAGE Environment (Proxmox Host: `guardian`)
 
-| Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 20 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`k3s-cp-s-<rand>`** | Control Plane | `2001 - 2003` | DHCP (`192.168.0.x`) | `10.20.20.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) |
-| **`k3s-wk-s-<rand>`** | Worker / Storage | `2011 - 2013` | DHCP (`192.168.0.x`) | `10.20.20.21 - 23` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) |
+| Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 20 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS | Proxmox Host |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **`k3s-cp-s-<rand>`** | Control Plane | `2001 - 2003` | DHCP (`192.168.0.x`) | `10.20.20.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `guardian` |
+| **`k3s-wk-s-<rand>`** | Worker / Storage | `2011 - 2013` | DHCP (`192.168.0.x`) | `10.20.20.21 - 23` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) | `guardian` |
 
-### PROD Environment
+### PROD Environment (Proxmox Host: `colossus`)
 
-| Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 30 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`k3s-cp-p-<rand>`** | Control Plane | `3001 - 3003` | DHCP (`192.168.0.x`) | `10.30.30.11 - 13` | 4 | 8192 MB | 50 GB | 30 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) |
-| **`k3s-wk-p-<rand>`** | Worker / Storage | `3011 - 3013` | DHCP (`192.168.0.x`) | `10.30.30.21 - 23` | 8 | 16384 MB | 50 GB | 100 GB | `/mnt/storage-data01` (XFS, Longhorn) |
+| Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 30 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS | Proxmox Host |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **`k3s-cp-p-<rand>`** | Control Plane | `3001 - 3003` | DHCP (`192.168.0.x`) | `10.30.30.11 - 13` | 4 | 8192 MB | 50 GB | 30 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `colossus` |
+| **`k3s-wk-p-<rand>`** | Worker / Storage | `3011 - 3013` | DHCP (`192.168.0.x`) | `10.30.30.21 - 23` | 8 | 16384 MB | 50 GB | 100 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
 
 ---
 
@@ -163,7 +155,7 @@ All nodes are labeled at the Kubernetes engine level and organized into Ansible 
 - `monitoring.jnet.lan/group: control-plane`
 - `monitoring.jnet.lan/tier: infrastructure`
 - `topology.kubernetes.io/region: homelab`
-- `topology.kubernetes.io/zone: guardian`
+- `topology.kubernetes.io/zone: guardian` (Stage) / `colossus` (Prod)
 
 #### Worker Nodes (`k3s-wk-s-<rand>` in Stage / `k3s-wk-p-<rand>` in Prod):
 - `node-role.kubernetes.io/worker: "true"`
@@ -174,7 +166,7 @@ All nodes are labeled at the Kubernetes engine level and organized into Ansible 
 - `monitoring.jnet.lan/group: worker`
 - `monitoring.jnet.lan/tier: workload`
 - `topology.kubernetes.io/region: homelab`
-- `topology.kubernetes.io/zone: guardian`
+- `topology.kubernetes.io/zone: guardian` (Stage) / `colossus` (Prod)
 
 ### 6.2. Ansible Inventory Groups
 - `k3s_cluster`: All 6 nodes in the environment.

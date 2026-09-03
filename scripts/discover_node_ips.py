@@ -49,12 +49,17 @@ VAULT_ADDR = os.environ.get("VAULT_ADDR", "https://192.168.0.40:8200").rstrip("/
 VAULT_TOKEN = os.environ.get("VAULT_TOKEN", "")
 SUBNET_PREFIX = os.environ.get("SUBNET_PREFIX", "192.168.0")
 SSH_USER = os.environ.get("ANSIBLE_USER", "almalinux")
-PVE_ENDPOINT = os.environ.get("PVE_HOST_2_ENDPOINT", os.environ.get("PVE_ENDPOINT", "https://guardian.jnet.lan:8006/")).rstrip("/")
-PVE_API_TOKEN = os.environ.get("PVE_HOST_2_API_TOKEN", os.environ.get("PVE_API_TOKEN", ""))
-PVE_NODE = os.environ.get("PVE_HOST_2_NODE_NAME", "guardian")
+if ENV == "prod":
+    PVE_ENDPOINT = os.environ.get("PVE_HOST_1_ENDPOINT", os.environ.get("PVE_ENDPOINT", "https://colossus.jnet.lan:8006/")).rstrip("/")
+    PVE_API_TOKEN = os.environ.get("PVE_HOST_1_API_TOKEN", os.environ.get("PVE_API_TOKEN", ""))
+    PVE_NODE = os.environ.get("PVE_HOST_1_NODE_NAME", os.environ.get("PVE_NODE_NAME", "colossus"))
+else:
+    PVE_ENDPOINT = os.environ.get("PVE_HOST_2_ENDPOINT", os.environ.get("PVE_ENDPOINT", "https://guardian.jnet.lan:8006/")).rstrip("/")
+    PVE_API_TOKEN = os.environ.get("PVE_HOST_2_API_TOKEN", os.environ.get("PVE_API_TOKEN", ""))
+    PVE_NODE = os.environ.get("PVE_HOST_2_NODE_NAME", os.environ.get("PVE_NODE_NAME", "guardian"))
 
 # Load credentials from Vault if available
-if VAULT_TOKEN and (not PVE_API_TOKEN or PVE_ENDPOINT == "https://guardian.jnet.lan:8006"):
+if VAULT_TOKEN and not PVE_API_TOKEN:
     try:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
@@ -67,9 +72,14 @@ if VAULT_TOKEN and (not PVE_API_TOKEN or PVE_ENDPOINT == "https://guardian.jnet.
             res_data = json.loads(response.read().decode())
             data = res_data.get("data", {}).get("data", {})
             if data:
-                PVE_API_TOKEN = PVE_API_TOKEN or data.get("pve_host_2_api_token") or data.get("pve_api_token", "")
-                PVE_ENDPOINT = data.get("pve_host_2_endpoint") or data.get("pve_endpoint") or PVE_ENDPOINT
-                PVE_NODE = data.get("pve_host_2_node_name") or data.get("pve_node_name") or PVE_NODE
+                if ENV == "prod":
+                    PVE_API_TOKEN = PVE_API_TOKEN or data.get("pve_host_1_api_token") or data.get("pve_api_token", "")
+                    PVE_ENDPOINT = data.get("pve_host_1_endpoint") or data.get("pve_endpoint") or PVE_ENDPOINT
+                    PVE_NODE = data.get("pve_host_1_node_name") or data.get("pve_node_name") or "colossus"
+                else:
+                    PVE_API_TOKEN = PVE_API_TOKEN or data.get("pve_host_2_api_token") or data.get("pve_api_token", "")
+                    PVE_ENDPOINT = data.get("pve_host_2_endpoint") or data.get("pve_endpoint") or PVE_ENDPOINT
+                    PVE_NODE = data.get("pve_host_2_node_name") or data.get("pve_node_name") or "guardian"
     except Exception as e:
         print(f"[DEBUG] Vault discovery credential check skipped: {e}")
 

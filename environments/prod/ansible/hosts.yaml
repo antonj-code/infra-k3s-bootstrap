@@ -11,7 +11,7 @@ all:
               ansible_host: 192.168.0.211
               k3s_internal_ip: 10.30.30.11
               k3s_node_id: 3001
-              pve_host: guardian
+              pve_host: colossus
               node_role: control-plane
               k3s_node_type: management
               monitoring_group: control-plane
@@ -21,7 +21,7 @@ all:
               ansible_host: 192.168.0.212
               k3s_internal_ip: 10.30.30.12
               k3s_node_id: 3002
-              pve_host: guardian
+              pve_host: colossus
               node_role: control-plane
               k3s_node_type: management
               monitoring_group: control-plane
@@ -31,7 +31,7 @@ all:
               ansible_host: 192.168.0.213
               k3s_internal_ip: 10.30.30.13
               k3s_node_id: 3003
-              pve_host: guardian
+              pve_host: colossus
               node_role: control-plane
               k3s_node_type: management
               monitoring_group: control-plane
@@ -43,7 +43,7 @@ all:
               ansible_host: 192.168.0.221
               k3s_internal_ip: 10.30.30.21
               k3s_node_id: 3011
-              pve_host: guardian
+              pve_host: colossus
               node_role: worker
               k3s_node_type: compute
               monitoring_group: worker
@@ -54,7 +54,7 @@ all:
               ansible_host: 192.168.0.222
               k3s_internal_ip: 10.30.30.22
               k3s_node_id: 3012
-              pve_host: guardian
+              pve_host: colossus
               node_role: worker
               k3s_node_type: compute
               monitoring_group: worker
@@ -65,7 +65,7 @@ all:
               ansible_host: 192.168.0.223
               k3s_internal_ip: 10.30.30.23
               k3s_node_id: 3013
-              pve_host: guardian
+              pve_host: colossus
               node_role: worker
               k3s_node_type: compute
               monitoring_group: worker
