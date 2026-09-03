@@ -1,0 +1,42 @@
+---
+# ==============================================================================
+# Helper Playbook: Teardown and Uninstall K3s across all nodes
+# ==============================================================================
+
+- name: Uninstall K3s agent from all worker nodes
+  hosts: k3s_workers
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Execute k3s agent uninstallation script
+      ansible.builtin.command:
+        cmd: /usr/local/bin/k3s-agent-uninstall.sh
+      failed_when: false
+      changed_when: true
+
+- name: Uninstall K3s server from all control plane nodes
+  hosts: k3s_control_plane
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Execute k3s server uninstallation script
+      ansible.builtin.command:
+        cmd: /usr/local/bin/k3s-uninstall.sh
+      failed_when: false
+      changed_when: true
+
+- name: Clean up remaining rancher / k3s directories
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Remove lingering config and data directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/rancher
+        - /var/lib/rancher
+        - /var/lib/kubelet
+        - /run/k3s
+        - /run/flannel

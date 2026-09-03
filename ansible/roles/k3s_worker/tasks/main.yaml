@@ -1,0 +1,337 @@
+---
+# ==============================================================================
+# K3s Worker Node Deployment, Storage Mount & Cluster Join
+# ==============================================================================
+
+# --- Step -1: Resolve Reachable Address of the Primary Control Plane ---
+# net1 (internal cluster network) only exists on nodes recreated since it was
+# introduced - if the primary hasn't been recreated yet, its internal IP
+# answers nothing. Fall back to its external address rather than hanging a
+# worker join on an address nothing is actually listening on.
+- name: Check liveness of primary control plane via the internal cluster network (net1)
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[k3s_primary_control_plane]['k3s_internal_ip'] }}"
+    port: "{{ k3s_api_port }}"
+    timeout: 5
+  register: primary_liveness_internal
+  ignore_errors: true
+  changed_when: false
+
+- name: Determine reachable address of the primary control plane (internal preferred, external fallback)
+  ansible.builtin.set_fact:
+    k3s_primary_control_plane_address: >-
+      {{ hostvars[k3s_primary_control_plane]['k3s_internal_ip']
+         if not primary_liveness_internal.failed
+         else hostvars[k3s_primary_control_plane]['ansible_host'] }}
+
+# --- Step 0: Check if K3s agent is already initialized ---
+- name: Check if k3s agent is already initialized
+  ansible.builtin.stat:
+    path: /var/lib/rancher/k3s/agent/client-ca.crt
+  register: k3s_agent_already_initialized
+
+# --- Step 1: Format & Mount Secondary 50GB Storage Disk (XFS on {{ k3s_worker_data_mount | default('/mnt/storage-data01') }}) ---
+- name: Check if a secondary disk exists at all
+  ansible.builtin.stat:
+    path: "{{ k3s_worker_data_disk | default('/dev/sdb') }}"
+  register: sdb_disk_stat
+
+- name: Prepare and mount secondary 50GB storage volume with XFS
+  when: sdb_disk_stat.stat.exists and not (k3s_agent_already_initialized.stat.exists | default(false))
+  block:
+    - name: Wait for udev to finish processing secondary disk before formatting
+      ansible.builtin.command:
+        cmd: udevadm settle --timeout=30
+      changed_when: false
+      failed_when: false
+
+    # /dev/sdb is not a reliable name for "the data disk". Linux assigns
+    # sd-letters in SCSI discovery-completion order, and AlmaLinux/RHEL's
+    # default async SCSI scan means scsi0 (the OS root disk, cloned from
+    # the CIS template) and scsi1 (the blank data disk) can finish
+    # probing in either order across boots - what we called "Device or
+    # resource busy" was frequently this task pointed at the mounted,
+    # LVM-backed root disk, not a udev timing gap; only the disk being
+    # too busy to format kept that from being destructive. Identify the
+    # real target by shape instead: the root disk always has partitions
+    # (boot + LVM), the blank data disk never does. Refuse to guess if
+    # that's not unambiguous.
+    - name: Identify the unpartitioned secondary disk (the actual data disk, not necessarily /dev/sdb)
+      ansible.builtin.shell: |
+        for d in /dev/sd?; do
+          if [ "$(lsblk -nlo TYPE "$d" | grep -c '^part$')" -eq 0 ]; then
+            echo "$d"
+          fi
+        done
+      register: data_disk_candidates
+      changed_when: false
+
+    - name: Fail if the data disk can't be unambiguously identified
+      ansible.builtin.assert:
+        that:
+          - data_disk_candidates.stdout_lines | length == 1
+        fail_msg: >-
+          Expected exactly one unpartitioned disk to identify as the
+          secondary data disk, found {{ data_disk_candidates.stdout_lines | length }}:
+          {{ data_disk_candidates.stdout_lines }}. Refusing to guess which
+          one to format.
+
+    - name: Set resolved data disk device fact
+      ansible.builtin.set_fact:
+        k3s_worker_resolved_disk: "{{ data_disk_candidates.stdout_lines[0] }}"
+
+    - name: Check if secondary disk is already mounted
+      ansible.builtin.command:
+        cmd: mountpoint -q {{ k3s_worker_data_mount | default('/mnt/storage-data01') }}
+      register: sdb_mount_check
+      failed_when: false
+      changed_when: false
+
+    - name: Check if secondary disk already has a filesystem
+      ansible.builtin.command:
+        cmd: blkid -c /dev/null -o value -s TYPE {{ k3s_worker_resolved_disk }}
+      register: sdb_fs_check
+      failed_when: false
+      changed_when: false
+      when: sdb_mount_check.rc != 0
+
+    - name: Create XFS filesystem on secondary disk if unformatted and not mounted
+      # udevadm settle above only covers the gap before this block starts - a
+      # delayed udev "change" event can still reclaim the device during the
+      # mount/fs checks above or between retries here, so settle again
+      # immediately before each mkfs attempt rather than relying on one
+      # upfront settle call to cover the whole retry window. The retry
+      # budget is wider than a single-node redeploy needs because a full
+      # cluster rebuild reboots/cold-plugs every node's disk at once, so
+      # host-level contention can stretch out how long that re-probe takes.
+      # On failure, dump what actually has the device open so a recurrence
+      # points at the real holder instead of another guess.
+      ansible.builtin.shell: |
+        udevadm settle --timeout=30
+        if mkfs.xfs -f {{ k3s_worker_resolved_disk }}; then
+          exit 0
+        fi
+        echo "mkfs failed - dumping diagnostics on what holds {{ k3s_worker_resolved_disk }} open:" >&2
+        lsblk {{ k3s_worker_resolved_disk }} >&2 || true
+        fuser -vm {{ k3s_worker_resolved_disk }} >&2 || true
+        exit 1
+      register: sdb_format_result
+      until: sdb_format_result is succeeded
+      retries: 10
+      delay: 10
+      changed_when: sdb_format_result.rc == 0
+      when: sdb_mount_check.rc != 0 and (sdb_fs_check.stdout | default('')) == ""
+
+
+    - name: Ensure {{ k3s_worker_data_mount | default('/mnt/storage-data01') }} directory exists
+
+      ansible.builtin.file:
+        path: "{{ k3s_worker_data_mount | default('/mnt/storage-data01') }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Read filesystem UUID of the resolved data disk for stable fstab persistence
+      ansible.builtin.command:
+        cmd: blkid -c /dev/null -s UUID -o value {{ k3s_worker_resolved_disk }}
+      register: sdb_uuid
+      changed_when: false
+
+    # Mount by UUID, not device path - sd-letters aren't stable across
+    # reboots on this platform (see above), so a device-path fstab entry
+    # could silently point at the wrong disk after some future reboot.
+    - name: Mount secondary disk to {{ k3s_worker_data_mount | default('/mnt/storage-data01') }} persistently in /etc/fstab
+      ansible.posix.mount:
+        path: "{{ k3s_worker_data_mount | default('/mnt/storage-data01') }}"
+        src: "UUID={{ sdb_uuid.stdout }}"
+        fstype: xfs
+        opts: defaults,noatime,nofail,x-systemd.device-timeout=30
+        state: mounted
+
+    - name: Ensure dedicated Longhorn storage directory exists on secondary disk
+      ansible.builtin.file:
+        path: "{{ longhorn_data_path | default('/mnt/storage-data01/longhorn') }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+# --- Step 1.5: Stale Agent State Cleanup on Unclean Worker Nodes ---
+- name: Check if k3s agent is already initialized
+  ansible.builtin.stat:
+    path: /var/lib/rancher/k3s/agent/client-ca.crt
+  register: k3s_already_initialized
+
+- name: Clean stale agent state when joining a newly bootstrapped cluster
+  when: not (rejoining_existing_cluster | default(false)) and not (k3s_already_initialized.stat.exists | default(false))
+  block:
+    - name: Check if existing agent credentials exist from prior cluster
+      ansible.builtin.stat:
+        path: /var/lib/rancher/k3s/agent
+      register: stale_agent_stat
+
+    - name: Stop K3s agent and remove stale state to prevent TLS authority mismatches
+      when: stale_agent_stat.stat.exists
+      block:
+        - name: Stop k3s-agent service
+          ansible.builtin.systemd:
+            name: k3s-agent
+            state: stopped
+          failed_when: false
+
+        - name: Stop and disable any lingering k3s server service on worker
+          ansible.builtin.systemd:
+            name: k3s
+            state: stopped
+            enabled: false
+          failed_when: false
+
+        - name: Remove stale K3s agent data directory and local kubeconfig
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /var/lib/rancher/k3s/agent
+            - /etc/rancher/k3s/k3s.yaml
+
+
+# --- Step 2: K3s Agent Configuration & Join ---
+
+- name: Create K3s configuration directory
+
+  ansible.builtin.file:
+    path: "{{ k3s_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Deploy K3s worker node config.yaml
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ k3s_config_dir }}/config.yaml"
+    owner: root
+    group: root
+    mode: '0600'
+  register: k3s_worker_config_result
+
+- name: Check if K3s agent binary is already installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s
+  register: k3s_agent_bin_stat
+
+- name: Check if K3s agent systemd service file is installed
+  ansible.builtin.stat:
+    path: /etc/systemd/system/k3s-agent.service
+  register: k3s_agent_service_stat
+
+- name: Get currently installed K3s version
+  ansible.builtin.command:
+    cmd: /usr/local/bin/k3s --version
+  register: k3s_agent_installed_version
+  changed_when: false
+  failed_when: false
+  when: k3s_agent_bin_stat.stat.exists
+
+- name: Download and install K3s agent binary and systemd service
+  when: >-
+    (not k3s_agent_bin_stat.stat.exists) or (not k3s_agent_service_stat.stat.exists)
+    or (k3s_version not in (k3s_agent_installed_version.stdout | default('')))
+  block:
+    - name: Download K3s official install script
+      ansible.builtin.get_url:
+        url: "https://get.k3s.io"
+        dest: /root/k3s-install.sh
+        mode: '0755'
+
+    - name: Execute K3s agent installation script (binary & service registration)
+      ansible.builtin.command:
+        cmd: bash /root/k3s-install.sh
+      environment:
+        INSTALL_K3S_VERSION: "{{ k3s_version }}"
+        INSTALL_K3S_EXEC: "agent"
+        INSTALL_K3S_SKIP_START: "true"
+        INSTALL_K3S_SKIP_SELINUX_RPM: "true"
+        K3S_URL: "https://{{ k3s_primary_control_plane_address }}:{{ k3s_api_port }}"
+        K3S_TOKEN: "{{ k3s_token }}"
+      changed_when: true
+
+    - name: Remove K3s install script
+      ansible.builtin.file:
+        path: /root/k3s-install.sh
+        state: absent
+
+- name: Restore SELinux file contexts on K3s agent directories & binaries
+  ansible.builtin.command:
+    cmd: restorecon -R -v /etc/rancher/k3s /var/lib/rancher/k3s /usr/local/bin/k3s /etc/systemd/system/k3s-agent.service {{ k3s_worker_data_mount | default('/mnt/storage-data01') }}
+  when: ansible_facts['os_family'] == 'RedHat'
+  register: restorecon_result
+  failed_when: restorecon_result.rc != 0 and 'No such file' not in restorecon_result.stderr
+  changed_when: false
+
+- name: Ensure stale node object and node-password secret are cleared on control plane for clean join
+  ansible.builtin.shell: |
+    /usr/local/bin/k3s kubectl delete node {{ inventory_hostname }} --ignore-not-found=true
+    /usr/local/bin/k3s kubectl delete secret -n kube-system {{ inventory_hostname }}.node-password --ignore-not-found=true
+    /usr/local/bin/k3s kubectl delete secret -n kube-system k3s.{{ inventory_hostname }}.node-password --ignore-not-found=true
+  delegate_to: "{{ k3s_primary_control_plane }}"
+  when: not (k3s_already_initialized.stat.exists | default(false))
+  failed_when: false
+  changed_when: false
+
+- name: Wait for primary K3s control plane API port 6443 to be responsive before worker join
+  ansible.builtin.wait_for:
+    host: "{{ k3s_primary_control_plane_address }}"
+    port: "{{ k3s_api_port }}"
+    delay: 2
+    timeout: 120
+
+
+- name: Start or restart K3s agent service
+  block:
+    - name: Ensure K3s agent service is started or restarted on config change
+      ansible.builtin.systemd:
+        name: k3s-agent
+        daemon_reload: true
+        state: "{{ 'restarted' if (k3s_worker_config_result.changed and k3s_agent_bin_stat.stat.exists and k3s_agent_service_stat.stat.exists) else 'started' }}"
+        enabled: true
+      register: k3s_agent_start_result
+      until: k3s_agent_start_result is not failed
+      retries: 5
+      delay: 6
+
+
+  rescue:
+    - name: Capture K3s agent journal logs on startup failure
+      ansible.builtin.command:
+        cmd: journalctl -xeu k3s-agent.service -n 100 --no-pager
+      register: k3s_agent_journal_logs
+      changed_when: false
+
+    - name: Display K3s agent journal logs to console
+      ansible.builtin.debug:
+        var: k3s_agent_journal_logs.stdout_lines
+
+    - name: Fail task with explicit worker startup error summary
+      ansible.builtin.fail:
+        msg: "k3s-agent.service failed to start or restart. Review detailed journalctl output above."
+
+
+
+- name: Verify worker node is registered and Ready on control plane
+  ansible.builtin.command:
+    cmd: /usr/local/bin/k3s kubectl get node {{ inventory_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+  delegate_to: "{{ k3s_primary_control_plane }}"
+  register: worker_ready_check
+  until: worker_ready_check.rc == 0 and worker_ready_check.stdout == "True"
+  retries: 30
+  delay: 6
+  changed_when: false
+
+- name: Label worker node with role in Kubernetes
+  ansible.builtin.command:
+    cmd: /usr/local/bin/k3s kubectl label node {{ inventory_hostname }} node-role.kubernetes.io/worker=true --overwrite
+  delegate_to: "{{ k3s_primary_control_plane }}"
+  changed_when: true
+

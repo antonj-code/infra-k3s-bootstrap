@@ -1,0 +1,6 @@
+---
+k3s_config_dir: "/etc/rancher/k3s"
+k3s_server_location: "/var/lib/rancher/k3s"
+k3s_worker_data_disk: "/dev/sdb"
+k3s_worker_data_mount: "/mnt/storage-data01"
+

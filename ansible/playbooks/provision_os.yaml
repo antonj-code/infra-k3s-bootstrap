@@ -1,0 +1,7 @@
+---
+- name: Apply OS settings and prerequisites on all K3s nodes
+  hosts: all
+  gather_facts: true
+  become: true
+  roles:
+    - role: k3s_common

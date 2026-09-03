@@ -1,0 +1,7 @@
+---
+k3s_config_dir: "/etc/rancher/k3s"
+k3s_server_location: "/var/lib/rancher/k3s"
+k3s_write_kubeconfig_mode: "0644"
+k3s_etcd_datastore_disk: "/dev/sdb"
+k3s_etcd_mount_point: "/var/lib/rancher/k3s/server/db"
+

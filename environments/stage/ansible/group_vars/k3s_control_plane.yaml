@@ -1,0 +1,31 @@
+---
+# Control Plane / Management Node Configuration
+k3s_node_role: "control-plane"
+k3s_node_type: "management"
+k3s_write_kubeconfig_mode: "0644"
+
+# Dedicated etcd Storage Configuration (20GB Virtual Disk)
+has_etcd_storage: true
+k3s_etcd_datastore_disk: "/dev/sdb"
+k3s_etcd_mount_point: "/var/lib/rancher/k3s/server/db"
+
+# Kubernetes Node Labels for Workload Scheduling & Monitoring
+# Note: node-role.kubernetes.io/* is automatically managed by K3s and forbidden in kubelet --node-labels
+k3s_node_labels:
+  - "k3s.io/node-type=management"
+  - "k3s.io/template-version={{ template_version | default(k3s_template_version | default('1.0.0')) }}"
+  - "k3s.io/template-vmid={{ template_vmid | default(template_vm_id | default('1000')) }}"
+  - "monitoring.jnet.lan/enabled=true"
+  - "monitoring.jnet.lan/group=control-plane"
+  - "monitoring.jnet.lan/tier=infrastructure"
+  - "topology.kubernetes.io/region=homelab"
+  - "topology.kubernetes.io/zone=guardian"
+
+
+# Kubernetes Node Taints for dedicated Control Plane separation
+k3s_node_taints:
+  - "node-role.kubernetes.io/control-plane=true:NoSchedule"
+
+
+
+

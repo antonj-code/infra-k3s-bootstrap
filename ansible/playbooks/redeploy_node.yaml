@@ -1,0 +1,140 @@
+---
+# ==============================================================================
+# Playbook: Automated Single-Node Redeployment & Recovery
+# ==============================================================================
+# Usage:
+#   ansible-playbook -i ../environments/stage/ansible/hosts.yaml playbooks/redeploy_node.yaml -e "target_node=k3s-wk-g7h8"
+#   ansible-playbook -i ../environments/prod/ansible/hosts.yaml playbooks/redeploy_node.yaml -e "target_node=k3s-cp-a1b2"
+# ==============================================================================
+
+- name: Validate target_node variable
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ensure target_node is defined and valid
+      ansible.builtin.assert:
+        that:
+          - target_node is defined
+          - target_node in groups['all']
+        fail_msg: "Please specify a valid target_node using -e 'target_node=<node_name>'. Available nodes: {{ groups['all'] }}"
+
+# --- Step 1: Clean up stale cluster state on surviving control plane ---
+- name: Remove stale node registration from Kubernetes & etcd
+  hosts: "{{ (groups['k3s_control_plane'] | difference([target_node]))[0] }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Check if node exists in Kubernetes
+      ansible.builtin.command:
+        cmd: /usr/local/bin/k3s kubectl get node {{ target_node }}
+      register: node_k8s_check
+      failed_when: false
+      changed_when: false
+
+    - name: Delete stale node from Kubernetes cluster
+      ansible.builtin.command:
+        cmd: /usr/local/bin/k3s kubectl delete node {{ target_node }} --ignore-not-found=true --timeout=30s
+      when: node_k8s_check.rc == 0
+      failed_when: false
+
+    - name: Clean up etcd member if target is a control plane node
+      when: target_node in groups['k3s_control_plane']
+      block:
+        - name: Check etcd cluster status
+          ansible.builtin.shell: |
+            ETCD_MEMBER_ID=$(/usr/local/bin/k3s etcdctl member list 2>/dev/null | grep "{{ target_node }}" | cut -d',' -f1 || echo "")
+            if [ -n "$ETCD_MEMBER_ID" ]; then
+              echo "Removing stale etcd member ID: $ETCD_MEMBER_ID"
+              /usr/local/bin/k3s etcdctl member remove "$ETCD_MEMBER_ID" 2>/dev/null || true
+            fi
+          register: etcd_cleanup_res
+          changed_when: etcd_cleanup_res.stdout != ""
+          failed_when: false
+
+# --- Step 2: Wait for repaved VM to come online via SSH ---
+- name: Wait for repaved node to become reachable via SSH
+  hosts: "{{ target_node }}"
+  gather_facts: false
+  tasks:
+    - name: Wait for SSH connectivity
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 300
+
+# --- Step 2.5: Force-clean stale local K3s state before rejoin ---
+# Step 1 already deleted target_node's Kubernetes Node object and etcd member
+# from the surviving cluster, so any leftover local TLS/etcd/agent state on
+# target_node (e.g. the VM wasn't actually wiped by the repave) is now stale
+# and must be removed - otherwise k3s starts locally using that stale
+# identity, which the cluster no longer recognizes, and the node never
+# re-registers.
+- name: Force-clean stale local K3s state on target node before rejoin
+  hosts: "{{ target_node }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Stop k3s and k3s-agent services if present
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - k3s
+        - k3s-agent
+      failed_when: false
+
+    - name: Remove stale K3s server/agent state and local kubeconfig
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/rancher/k3s/server/tls
+        - /var/lib/rancher/k3s/server/db/etcd
+        - /var/lib/rancher/k3s/agent
+        - /etc/rancher/k3s/k3s.yaml
+
+# --- Step 3: Apply Base OS Hardening & Sysctl ---
+- name: Apply OS-level hardening, swap disable, and sysctl to repaved node
+  hosts: "{{ target_node }}"
+  gather_facts: true
+  become: true
+  roles:
+    - role: k3s_common
+
+# --- Step 4: Rejoin Node to Cluster ---
+- name: Bootstrap or Rejoin Control Plane Node
+  hosts: "{{ target_node }}"
+  gather_facts: true
+  become: true
+  vars:
+    rejoining_existing_cluster: true
+  tasks:
+    - name: Configure and rejoin control plane node
+      ansible.builtin.include_role:
+        name: k3s_control_plane
+      when: target_node in groups['k3s_control_plane']
+
+- name: Rejoin Worker Node
+  hosts: "{{ target_node }}"
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Configure and rejoin worker node
+      ansible.builtin.include_role:
+        name: k3s_worker
+      when: target_node in groups['k3s_workers']
+
+# --- Step 5: Verification ---
+- name: Verify Cluster Health after Node Recovery
+  hosts: "{{ (groups['k3s_control_plane'] | difference([target_node]))[0] }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Check node status
+      ansible.builtin.command:
+        cmd: /usr/local/bin/k3s kubectl get nodes -o wide
+      register: nodes_post_recovery
+      changed_when: false
+
+    - name: Display cluster status
+      ansible.builtin.debug:
+        msg: "{{ nodes_post_recovery.stdout_lines }}"

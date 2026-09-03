@@ -1,0 +1,40 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+terraform.auto.tfvars.json
+.terraform.lock.hcl
+tfplan
+tfplan.json
+
+# Ansible
+ansible/inventory/hosts.yaml
+!ansible/inventory/hosts.example.yaml
+*.retry
+.ansible/
+ansible/.ansible/
+
+# Credentials & TLS Keys
+credentials/
+*.pem
+*.key
+*.crt
+*.csr
+kubeconfig
+kubeconfig.yaml
+.kube/
+
+# OS & Editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Environment files
+.env
+.env.*
+!.env.vault.example
+!.env.example

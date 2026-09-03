@@ -1,0 +1,96 @@
+---
+# Dependencies and system packages
+k3s_common_packages_redhat:
+  - ca-certificates
+  - curl
+  - gnupg2
+  - jq
+  - tar
+  - procps-ng
+  - sudo
+  - policycoreutils-python-utils
+  - container-selinux
+  - firewalld
+  - iptables
+  - ipset
+  - iproute
+  - socat
+  - conntrack-tools
+  - iscsi-initiator-utils
+  - nfs-utils
+  - xfsprogs
+
+
+k3s_common_packages_debian:
+  - ca-certificates
+  - curl
+  - gnupg
+  - jq
+  - tar
+  - procps
+  - sudo
+  - iptables
+  - ipset
+  - iproute2
+  - socat
+  - conntrack
+  - open-iscsi
+  - nfs-common
+  - xfsprogs
+
+# Kernel modules required for Kubernetes & IPVS
+k3s_kernel_modules:
+  - overlay
+  - br_netfilter
+  - ip_vs
+  - ip_vs_rr
+  - ip_vs_wrr
+  - ip_vs_sh
+  - nf_conntrack
+
+# Sysctl parameters tailored for Kubernetes & K3s
+k3s_sysctl_settings:
+  - { name: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+  - { name: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+  - { name: 'net.ipv4.ip_forward', value: '1' }
+  - { name: 'net.ipv4.conf.all.forwarding', value: '1' }
+  - { name: 'net.ipv4.conf.default.forwarding', value: '1' }
+  - { name: 'net.ipv4.conf.all.log_martians', value: '0' }
+  - { name: 'net.ipv4.conf.default.log_martians', value: '0' }
+  - { name: 'net.ipv4.conf.all.rp_filter', value: '2' }
+  - { name: 'net.ipv4.conf.default.rp_filter', value: '2' }
+  - { name: 'net.ipv4.conf.all.arp_ignore', value: '1' }
+  - { name: 'net.ipv4.conf.all.arp_announce', value: '2' }
+  - { name: 'vm.swappiness', value: '0' }
+  - { name: 'vm.max_map_count', value: '262144' }
+  - { name: 'fs.inotify.max_user_watches', value: '524288' }
+  - { name: 'fs.inotify.max_user_instances', value: '8192' }
+  - { name: 'net.core.somaxconn', value: '4096' }
+
+
+# Firewall ports for Control Plane
+k3s_control_plane_firewall_ports:
+  - "6443/tcp"       # Kubernetes API Server & K3s supervisor (and kube-vip)
+  - "2379-2380/tcp"  # Embedded etcd client and peer communication
+  - "10250/tcp"      # Kubelet API & metrics
+  - "2112/tcp"       # kube-vip Prometheus metrics endpoint
+  - "8472/udp"       # Flannel VXLAN overlay (if used)
+  - "51820/udp"      # Flannel Wireguard (IPv4)
+  - "51821/udp"      # Flannel Wireguard (IPv6)
+  - "30000-32767/tcp" # NodePort Service range
+
+
+# Firewall ports for Workers
+k3s_worker_firewall_ports:
+  - "10250/tcp"      # Kubelet API & metrics
+  - "8472/udp"       # Flannel VXLAN overlay (if used)
+  - "51820/udp"      # Flannel Wireguard (IPv4)
+  - "51821/udp"      # Flannel Wireguard (IPv6)
+  - "30000-32767/tcp" # NodePort Service range
+
+# Trusted subnets for cluster internal traffic
+k3s_trusted_subnets:
+  - "192.168.0.0/24"  # Physical node LAN (net0, external/management)
+  - "10.20.20.0/24"   # Internal cluster network (net1, VLAN 20 - etcd/kubelet/flannel)
+  - "10.42.0.0/16"    # K3s Pod CIDR
+  - "10.43.0.0/16"    # K3s Service CIDR

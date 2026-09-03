@@ -1,0 +1,284 @@
+---
+# ==============================================================================
+# OS Preparation & Hardening for K3s on AlmaLinux 9 CIS Nodes
+# ==============================================================================
+
+# --- Step -1: Wait for the VM to Actually Finish Booting ---
+# This role used to unconditionally reboot every node here, on every run,
+# to work around mkfs.xfs "Device or resource busy" on /dev/sdb further
+# down the pipeline. That was chasing the wrong cause: /dev/sdb isn't a
+# stable name for "the secondary disk" on these VMs (see the etcd/worker
+# roles' disk-formatting tasks for the real fix, which identifies the
+# target disk by shape instead of by sd-letter), and a reboot only ever
+# "fixed" it by re-rolling which disk got which letter. With that fixed
+# properly, the blanket reboot serves no purpose - removed.
+#
+# SSH can still come up while systemd is working through other boot-time
+# units, so block here until systemd itself reports the boot has reached
+# a final state, rather than relying on cloud-init's narrower completion
+# signal below.
+- name: Wait for system to finish booting before proceeding
+  ansible.builtin.command:
+    cmd: systemctl is-system-running --wait
+  changed_when: false
+  failed_when: false
+
+# Facts (including network interfaces) were gathered at play start, which can
+# be before the reboot above or before cloud-init finished bringing up net1 -
+# refresh them now so the interface-matching fact below sees the real state.
+- name: Re-gather facts now that the node has fully booted
+  ansible.builtin.setup:
+
+# --- Step 0: Ansible Environment & Remote Temp Directories ---
+- name: Ensure Ansible remote temporary directory exists with secure permissions
+  ansible.builtin.raw: mkdir -p /root/.ansible/tmp && chmod 0700 /root/.ansible /root/.ansible/tmp
+  changed_when: false
+  failed_when: false
+
+# --- Step 0.5: Detect Internal Cluster Network Interface (net1 / VLAN 20) ---
+# k3s_internal_ip is the static address Terraform assigned to net1 (see
+# terraform/vms.tf), but net1 only exists on nodes recreated since it was
+# introduced - an older node has no interface with this address at all.
+# K3s flags like flannel-iface need the local interface NAME, not an IP, and
+# interface naming (enpXsY etc.) isn't guaranteed to be stable/predictable
+# across templates - so resolve it by matching the IP against this host's
+# own facts rather than assuming a name like "eth1". Falls back to an empty
+# string (rather than erroring) when net1 isn't present on this node yet.
+- name: Determine local network interface matching the internal cluster IP (net1 / VLAN 20), if present
+  ansible.builtin.set_fact:
+    k3s_internal_interface: >-
+      {{ (ansible_facts.interfaces
+          | map('extract', ansible_facts)
+          | selectattr('ipv4', 'defined')
+          | selectattr('ipv4.address', 'equalto', k3s_internal_ip)
+          | map(attribute='device')
+          | list | first) | default('', true) }}
+
+# --- Step 0.6: Determine Fleet-Wide Internal Network Readiness ---
+# node-ip/advertise-address/flannel-iface can only safely move to net1 once
+# EVERY node in the cluster has it. A node with an internal-only address is
+# not just "unreachable right now" to a peer that hasn't been recreated with
+# net1 yet - there is literally no route, since that peer has no NIC on
+# VLAN 20 at all. That silently breaks etcd replication (advertise-address)
+# and flannel host-gw routing (node-ip) between converted and unconverted
+# nodes. Probe every other cluster member's internal IP - not their k3s API,
+# since a peer can have net1 but be mid-restart - and only switch this node
+# to internal addressing once 100% of the fleet answers. This makes the
+# net1 cutover self-healing across incremental single-node recoveries:
+# every node keeps using external addressing consistently until the last
+# node in the fleet is converted, then everyone flips to internal together.
+# SSH (22) is used as the reachability probe rather than a k3s port so this
+# doesn't depend on any cluster service being up, and rather than ICMP so it
+# doesn't depend on a ping binary being present on the hardened CIS image.
+- name: Check reachability of all other cluster nodes on the internal cluster network
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[item]['k3s_internal_ip'] }}"
+    port: 22
+    timeout: 5
+  loop: "{{ groups['k3s_cluster'] | difference([inventory_hostname]) }}"
+  register: k3s_internal_peer_check
+  ignore_errors: true
+  changed_when: false
+
+- name: Determine whether the internal cluster network is fully rolled out fleet-wide
+  ansible.builtin.set_fact:
+    k3s_internal_network_ready: >-
+      {{ (k3s_internal_interface | default('')) != ''
+         and (k3s_internal_peer_check.results | selectattr('failed', 'equalto', false) | list | length)
+             == (groups['k3s_cluster'] | difference([inventory_hostname]) | list | length) }}
+
+# --- Step 1: Swap Management ---
+- name: Disable active swap space immediately
+
+  ansible.builtin.command:
+    cmd: swapoff -a
+  changed_when: false
+
+- name: Disable swap entry in /etc/fstab permanently
+  ansible.posix.mount:
+    name: "{{ item }}"
+    fstype: swap
+    state: absent
+  loop:
+    - none
+    - swap
+
+- name: Comment out any remaining swap lines in /etc/fstab
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\s+swap\s+.*)$'
+    replace: '# \1'
+
+# --- Step 2: System Packages ---
+- name: Wait for cloud-init to complete
+  ansible.builtin.command:
+    cmd: cloud-init status --wait
+  changed_when: false
+  failed_when: false
+
+- name: Install required prerequisite packages on AlmaLinux / RedHat
+  ansible.builtin.dnf:
+    name: "{{ k3s_common_packages_redhat }}"
+    state: present
+    lock_timeout: 180
+  register: dnf_pkg_install
+  until: dnf_pkg_install is succeeded
+  retries: 5
+  delay: 10
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Install required prerequisite packages on Debian / Ubuntu
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+    name: "{{ k3s_common_packages_debian }}"
+    state: present
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Ensure iscsid service is started and enabled (Required for Longhorn CSI)
+  ansible.builtin.systemd:
+    name: iscsid
+    state: started
+    enabled: true
+  failed_when: false
+
+# --- Step 3: Kernel Modules Configuration ---
+- name: Configure kernel modules for Kubernetes & IPVS
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k3s-ipvs.conf
+    content: |
+      # Kubernetes & K3s Kernel Modules
+      overlay
+      br_netfilter
+      # IPVS Load Balancing Modules
+      ip_vs
+      ip_vs_rr
+      ip_vs_wrr
+      ip_vs_sh
+      nf_conntrack
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd-modules-load
+
+- name: Load kernel modules immediately
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ k3s_kernel_modules }}"
+  failed_when: false
+
+# --- Step 4: Sysctl Parameters Tuning ---
+- name: Apply sysctl optimizations for Kubernetes networking and performance
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-kubernetes.conf
+    state: present
+    reload: true
+  loop: "{{ k3s_sysctl_settings }}"
+  notify: Reload sysctl
+
+# --- Step 5: SELinux Configuration for K3s ---
+- name: Install container-selinux and K3s SELinux policy RPM on RedHat / AlmaLinux
+  when: ansible_facts['os_family'] == 'RedHat'
+  block:
+    - name: Ensure container-selinux package is installed from AppStream
+      ansible.builtin.dnf:
+        name: container-selinux
+        state: present
+        lock_timeout: 180
+      register: container_selinux_install
+      until: container_selinux_install is succeeded
+      retries: 5
+      delay: 10
+
+    - name: Download k3s-selinux RPM package
+      ansible.builtin.get_url:
+        url: "https://github.com/k3s-io/k3s-selinux/releases/download/v1.6.stable.1/k3s-selinux-1.6-1.el9.noarch.rpm"
+        dest: /root/k3s-selinux.rpm
+        mode: '0644'
+      register: k3s_selinux_download
+      failed_when: false
+
+    - name: Install k3s-selinux package via dnf
+      ansible.builtin.dnf:
+        name: /root/k3s-selinux.rpm
+        state: present
+        disable_gpg_check: true
+        lock_timeout: 180
+      register: k3s_selinux_install
+      until: k3s_selinux_install is succeeded
+      retries: 5
+      delay: 10
+      when: k3s_selinux_download is succeeded and not k3s_selinux_download.failed
+      failed_when: false
+
+    - name: Clean up temporary k3s-selinux RPM
+      ansible.builtin.file:
+        path: /root/k3s-selinux.rpm
+        state: absent
+
+
+
+
+# --- Step 6: Firewalld Configuration ---
+- name: Ensure firewalld is running and enabled on RedHat / AlmaLinux
+  ansible.builtin.systemd:
+    name: firewalld
+    state: started
+    enabled: true
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Enable masquerade in firewalld
+  ansible.posix.firewalld:
+    masquerade: true
+    state: enabled
+    permanent: true
+    immediate: true
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Add cluster and pod subnets to trusted zone
+  ansible.posix.firewalld:
+    zone: trusted
+    source: "{{ item }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ k3s_trusted_subnets }}"
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Add CNI interfaces to trusted zone
+  ansible.posix.firewalld:
+    zone: trusted
+    interface: "{{ item }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop:
+    - "cni0"
+    - "flannel.1"
+  failed_when: false
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Open K3s Control Plane firewall ports in default zone
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ k3s_control_plane_firewall_ports }}"
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - inventory_hostname in groups['k3s_control_plane']
+
+- name: Open K3s Worker firewall ports in default zone
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ k3s_worker_firewall_ports }}"
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - inventory_hostname in groups['k3s_workers']

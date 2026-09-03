@@ -1,0 +1,23 @@
+---
+# Worker / Compute & Longhorn Storage Node Configuration
+k3s_node_role: "worker"
+k3s_node_type: "compute"
+has_longhorn_storage: true
+longhorn_data_path: "/mnt/storage-data01/longhorn"
+
+# Kubernetes Node Labels for Workload Scheduling, Longhorn CSI, & Monitoring
+# Note: node-role.kubernetes.io/* is applied post-join via control plane to comply with NodeRestriction
+k3s_node_labels:
+  - "k3s.io/node-type=compute"
+  - "k3s.io/template-version={{ template_version | default(k3s_template_version | default('1.0.0')) }}"
+  - "k3s.io/template-vmid={{ template_vmid | default(template_vm_id | default('1000')) }}"
+  - "storage.k3s.io/longhorn=true"
+  - "node.longhorn.io/create-default-disk=config"
+
+  - "monitoring.jnet.lan/enabled=true"
+  - "monitoring.jnet.lan/group=worker"
+  - "monitoring.jnet.lan/tier=workload"
+  - "topology.kubernetes.io/region=homelab"
+  - "topology.kubernetes.io/zone=guardian"
+
+

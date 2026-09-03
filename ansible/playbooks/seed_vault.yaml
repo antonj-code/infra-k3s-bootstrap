@@ -1,0 +1,87 @@
+---
+# ==============================================================================
+# Ansible Playbook: Seed HashiCorp Vault with K3s Cluster Secrets
+# ==============================================================================
+- name: Automate HashiCorp Vault Seeding
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Target Environment (stage or prod)
+    target_env: "{{ env | default('stage') }}"
+    # Vault Load Balancer Endpoint (Self-signed TLS: validate_certs is false)
+    vault_addr: "{{ lookup('env', 'VAULT_ADDR') | default('https://192.168.0.40:8200', true) }}"
+    vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+    ssh_key_path: "{{ lookup('env', 'HOME') }}/.ssh/k3s_{{ target_env }}_deploy_key"
+    pve_host_1_endpoint: "{{ lookup('env', 'PVE_HOST_1_ENDPOINT') | default(lookup('env', 'TF_VAR_pve_host_1_endpoint') | default('https://colossus.jnet.lan:8006/', true), true) }}"
+    pve_host_1_api_token: "{{ lookup('env', 'PVE_HOST_1_API_TOKEN') | default(lookup('env', 'TF_VAR_pve_host_1_api_token'), true) }}"
+    pve_host_1_node_name: "{{ lookup('env', 'PVE_HOST_1_NODE_NAME') | default(lookup('env', 'TF_VAR_pve_host_1_node_name') | default('colossus', true), true) }}"
+    pve_host_2_endpoint: "{{ lookup('env', 'PVE_HOST_2_ENDPOINT') | default(lookup('env', 'TF_VAR_pve_host_2_endpoint') | default('https://guardian.jnet.lan:8006/', true), true) }}"
+    pve_host_2_api_token: "{{ lookup('env', 'PVE_HOST_2_API_TOKEN') | default(lookup('env', 'TF_VAR_pve_host_2_api_token') | default(lookup('env', 'PVE_API_TOKEN') | default(lookup('env', 'TF_VAR_pve_api_token'), true), true), true) }}"
+    pve_host_2_node_name: "{{ lookup('env', 'PVE_HOST_2_NODE_NAME') | default(lookup('env', 'TF_VAR_pve_host_2_node_name') | default('guardian', true), true) }}"
+    pve_endpoint: "{{ lookup('env', 'PVE_ENDPOINT') | default('https://guardian.jnet.lan:8006/', true) }}"
+    pve_api_token: "{{ lookup('env', 'PVE_API_TOKEN') | default(pve_host_2_api_token, true) }}"
+    default_vip: "{{ '192.168.0.42' if target_env == 'prod' else '192.168.0.41' }}"
+    default_hostname: "{{ 'k3s-prod.jnet.lan' if target_env == 'prod' else 'k3s-stage.jnet.lan' }}"
+
+  tasks:
+    - name: Generate SSH deploy key pair if not present
+      ansible.builtin.command:
+        cmd: ssh-keygen -t ed25519 -f "{{ ssh_key_path }}" -N "" -C "gitlab-runner-k3s-{{ target_env }}@gitbox.jnet.lan"
+        creates: "{{ ssh_key_path }}"
+
+    - name: Read SSH public and private keys
+      ansible.builtin.set_fact:
+        ssh_pub_key: "{{ lookup('file', ssh_key_path + '.pub') }}"
+        ssh_priv_key: "{{ lookup('file', ssh_key_path) }}"
+
+    - name: Generate random K3s bootstrap token
+      ansible.builtin.set_fact:
+        generated_k3s_token: "k3s-{{ lookup('password', '/dev/null length=48 chars=ascii_letters,digits') }}"
+
+    - name: Seed bootstrap secret into Vault KV v2
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/secret/data/k3s-{{ target_env }}/bootstrap"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          data:
+            token: "{{ generated_k3s_token }}"
+            cluster_cidr: "10.42.0.0/16"
+            service_cidr: "10.43.0.0/16"
+            flannel_backend: "host-gw"
+            kube_proxy_mode: "ipvs"
+            kube_vip_address: "{{ default_vip }}"
+            kube_vip_hostname: "{{ default_hostname }}"
+        validate_certs: false
+        status_code: [200, 204]
+
+    - name: Seed credentials secret into Vault KV v2 (if PVE token provided)
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/secret/data/k3s-{{ target_env }}/credentials"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          data:
+            pve_host_1_endpoint: "{{ pve_host_1_endpoint }}"
+            pve_host_1_api_token: "{{ pve_host_1_api_token }}"
+            pve_host_1_node_name: "{{ pve_host_1_node_name }}"
+            pve_host_2_endpoint: "{{ pve_host_2_endpoint }}"
+            pve_host_2_api_token: "{{ pve_host_2_api_token }}"
+            pve_host_2_node_name: "{{ pve_host_2_node_name }}"
+            pve_endpoint: "{{ pve_host_2_endpoint }}"
+            pve_api_token: "{{ pve_host_2_api_token }}"
+            ssh_public_key: "{{ ssh_pub_key }}"
+            ssh_private_key: "{{ ssh_priv_key }}"
+        validate_certs: false
+        status_code: [200, 204]
+      when: pve_host_2_api_token != '' or pve_api_token != ''
+
+    - name: Display completion summary
+      ansible.builtin.debug:
+        msg: "[OK] Vault seeded successfully at {{ vault_addr }}/ui/vault/secrets/secret/show/k3s-{{ target_env }}"

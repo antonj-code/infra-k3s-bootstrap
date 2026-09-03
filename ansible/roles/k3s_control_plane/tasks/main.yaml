@@ -1,0 +1,439 @@
+---
+# ==============================================================================
+# K3s Control Plane Deployment & Embedded etcd High Availability
+# ==============================================================================
+
+# --- Step -1: Detect an Existing Live Cluster & Determine Join Target ---
+# k3s_primary_control_plane is just groups['k3s_control_plane'][0], which only
+# means "the bootstrap node" on a genuine first-time deploy. For recovery -
+# this node was destroyed/repaved while its peers kept running, including if
+# THIS node is index 0 - blindly cluster-init'ing or joining itself is wrong.
+# Detect peer liveness at runtime instead of relying on a caller-supplied flag,
+# so this works the same whether triggered via site.yaml or redeploy_node.yaml.
+- name: Determine control plane peer list (excluding self)
+  ansible.builtin.set_fact:
+    k3s_control_plane_peers: "{{ groups['k3s_control_plane'] | difference([inventory_hostname]) }}"
+
+- name: Check liveness of other control plane peers via the internal cluster network (net1)
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[item]['k3s_internal_ip'] }}"
+    port: "{{ k3s_api_port }}"
+    timeout: 5
+  loop: "{{ k3s_control_plane_peers }}"
+  register: peer_liveness_internal
+  # A dead/not-yet-recreated peer is an expected outcome here, not a task
+  # failure - failed_when: false keeps it out of ansible's error/ignoring
+  # log noise. Liveness is read from .msg below (only set on timeout),
+  # since failed_when overrides the result's own .failed field to always
+  # be false.
+  failed_when: false
+  changed_when: false
+
+# net1 only exists on nodes recreated since it was introduced. Mid-rollout, a
+# perfectly live peer that hasn't been recreated yet has no net1 IP at all,
+# so the internal-only check above times out even though it's up. Without
+# this fallback that reads as "no live cluster", which skips stale-state
+# cleanup below and, if this node happens to be primary, split-brains it
+# into its own single-node cluster instead of joining the real one.
+- name: Check liveness of other control plane peers via the external network (net1 rollout fallback)
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[item]['ansible_host'] }}"
+    port: "{{ k3s_api_port }}"
+    timeout: 5
+  loop: "{{ k3s_control_plane_peers }}"
+  register: peer_liveness_external
+  failed_when: false
+  changed_when: false
+
+- name: Build per-peer reachable-address map and liveness (internal preferred, external fallback)
+  ansible.builtin.set_fact:
+    k3s_peer_addresses: "{{ (k3s_peer_addresses | default({})) | combine({item.0: (hostvars[item.0]['k3s_internal_ip'] if item.1.msg is not defined else hostvars[item.0]['ansible_host'])}) }}"
+    k3s_peer_live: "{{ (k3s_peer_live | default({})) | combine({item.0: (item.1.msg is not defined or item.2.msg is not defined)}) }}"
+  loop: "{{ k3s_control_plane_peers | zip(peer_liveness_internal.results, peer_liveness_external.results) | list }}"
+  loop_control:
+    label: "{{ item.0 }}"
+
+- name: Determine control plane node to join and whether a live cluster already exists
+  ansible.builtin.set_fact:
+    k3s_cluster_already_exists: "{{ k3s_peer_live | dict2items | selectattr('value', 'equalto', true) | list | length > 0 }}"
+    k3s_join_target_control_plane: >-
+      {{ (k3s_peer_live | dict2items | selectattr('value', 'equalto', true) | map(attribute='key') | list | first)
+         if (k3s_peer_live | dict2items | selectattr('value', 'equalto', true) | list | length > 0)
+         else k3s_primary_control_plane }}
+
+- name: Resolve reachable address of the chosen join target (internal preferred, external fallback)
+  ansible.builtin.set_fact:
+    k3s_join_target_address: "{{ k3s_peer_addresses[k3s_join_target_control_plane] | default(k3s_primary_control_plane_ip) }}"
+
+# --- Step 0: Stale State Cleanup on Unclean Nodes ---
+- name: Check if k3s is already initialized
+  ansible.builtin.stat:
+    path: /var/lib/rancher/k3s/server/cred
+  register: k3s_already_initialized
+
+- name: Clean stale TLS certificates and database when newly bootstrapping cluster
+  when: not (rejoining_existing_cluster | default(false)) and not (k3s_already_initialized.stat.exists | default(false))
+
+  block:
+    - name: Check if existing server TLS certificates exist from prior cluster
+      ansible.builtin.stat:
+        path: /var/lib/rancher/k3s/server/tls
+      register: stale_tls_stat
+
+    - name: Stop K3s service and remove stale cluster state to prevent TLS authority mismatches
+      when: stale_tls_stat.stat.exists
+      block:
+        - name: Stop k3s service
+          ansible.builtin.systemd:
+            name: k3s
+            state: stopped
+          failed_when: false
+
+        - name: Stop and disable any lingering k3s agent service on control plane
+          ansible.builtin.systemd:
+            name: k3s-agent
+            state: stopped
+            enabled: false
+          failed_when: false
+
+
+        - name: Remove stale K3s server data directory and local kubeconfig
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /var/lib/rancher/k3s/server/tls
+            - /var/lib/rancher/k3s/server/db/etcd
+            - /etc/rancher/k3s/k3s.yaml
+
+# --- Step 0.5: Format & Mount Dedicated 20GB Storage Disk (XFS on /var/lib/rancher/k3s/server/db for etcd) ---
+- name: Check if a secondary disk exists at all
+  ansible.builtin.stat:
+    path: "{{ k3s_etcd_datastore_disk | default('/dev/sdb') }}"
+  register: sdb_etcd_disk_stat
+
+- name: Prepare and mount dedicated 20GB etcd volume with XFS
+  when: sdb_etcd_disk_stat.stat.exists and not (k3s_already_initialized.stat.exists | default(false))
+  block:
+    - name: Wait for udev to finish processing secondary etcd disk before formatting
+      ansible.builtin.command:
+        cmd: udevadm settle --timeout=30
+      changed_when: false
+      failed_when: false
+
+    # /dev/sdb is not a reliable name for "the etcd disk". Linux assigns
+    # sd-letters in SCSI discovery-completion order, and AlmaLinux/RHEL's
+    # default async SCSI scan means scsi0 (the OS root disk, cloned from
+    # the CIS template) and scsi1 (the blank etcd disk) can finish
+    # probing in either order across boots - what we called "Device or
+    # resource busy" was frequently this task pointed at the mounted,
+    # LVM-backed root disk, not a udev timing gap; only the disk being
+    # too busy to format kept that from being destructive. Identify the
+    # real target by shape instead: the root disk always has partitions
+    # (boot + LVM), the blank etcd disk never does. Refuse to guess if
+    # that's not unambiguous.
+    - name: Identify the unpartitioned secondary disk (the actual etcd disk, not necessarily /dev/sdb)
+      ansible.builtin.shell: |
+        for d in /dev/sd?; do
+          if [ "$(lsblk -nlo TYPE "$d" | grep -c '^part$')" -eq 0 ]; then
+            echo "$d"
+          fi
+        done
+      register: etcd_disk_candidates
+      changed_when: false
+
+    - name: Fail if the etcd disk can't be unambiguously identified
+      ansible.builtin.assert:
+        that:
+          - etcd_disk_candidates.stdout_lines | length == 1
+        fail_msg: >-
+          Expected exactly one unpartitioned disk to identify as the
+          secondary etcd disk, found {{ etcd_disk_candidates.stdout_lines | length }}:
+          {{ etcd_disk_candidates.stdout_lines }}. Refusing to guess which
+          one to format.
+
+    - name: Set resolved etcd disk device fact
+      ansible.builtin.set_fact:
+        k3s_etcd_resolved_disk: "{{ etcd_disk_candidates.stdout_lines[0] }}"
+
+    - name: Check if secondary etcd disk is already mounted
+      ansible.builtin.command:
+        cmd: mountpoint -q {{ k3s_etcd_mount_point | default('/var/lib/rancher/k3s/server/db') }}
+      register: sdb_etcd_mount_check
+      failed_when: false
+      changed_when: false
+
+    - name: Check if secondary etcd disk already has a filesystem
+      ansible.builtin.command:
+        cmd: blkid -c /dev/null -o value -s TYPE {{ k3s_etcd_resolved_disk }}
+      register: sdb_etcd_fs_check
+      failed_when: false
+      changed_when: false
+      when: sdb_etcd_mount_check.rc != 0
+
+    - name: Create XFS filesystem on secondary etcd disk if unformatted and not mounted
+      # See the equivalent worker task for why settle is re-run before each
+      # attempt rather than once upfront: a delayed udev "change" event can
+      # reclaim the device during the checks above or between retries. The
+      # retry budget is wider than a single-node redeploy needs because a
+      # full cluster rebuild reboots/cold-plugs every node's disk at once,
+      # so host-level contention can stretch out how long that re-probe
+      # takes. On failure, dump what actually has the device open so a
+      # recurrence points at the real holder instead of another guess.
+      ansible.builtin.shell: |
+        udevadm settle --timeout=30
+        if mkfs.xfs -f {{ k3s_etcd_resolved_disk }}; then
+          exit 0
+        fi
+        echo "mkfs failed - dumping diagnostics on what holds {{ k3s_etcd_resolved_disk }} open:" >&2
+        lsblk {{ k3s_etcd_resolved_disk }} >&2 || true
+        fuser -vm {{ k3s_etcd_resolved_disk }} >&2 || true
+        exit 1
+      register: sdb_etcd_format_result
+      until: sdb_etcd_format_result is succeeded
+      retries: 10
+      delay: 10
+      changed_when: sdb_etcd_format_result.rc == 0
+      when: sdb_etcd_mount_check.rc != 0 and (sdb_etcd_fs_check.stdout | default('')) == ""
+
+
+    - name: Ensure K3s server db directory exists
+      ansible.builtin.file:
+        path: "{{ k3s_etcd_mount_point | default('/var/lib/rancher/k3s/server/db') }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Read filesystem UUID of the resolved etcd disk for stable fstab persistence
+      ansible.builtin.command:
+        cmd: blkid -c /dev/null -s UUID -o value {{ k3s_etcd_resolved_disk }}
+      register: sdb_etcd_uuid
+      changed_when: false
+
+    # Mount by UUID, not device path - sd-letters aren't stable across
+    # reboots on this platform (see above), so a device-path fstab entry
+    # could silently point at the wrong disk after some future reboot.
+    - name: Mount dedicated etcd disk to /var/lib/rancher/k3s/server/db persistently in /etc/fstab
+      ansible.posix.mount:
+        path: "{{ k3s_etcd_mount_point | default('/var/lib/rancher/k3s/server/db') }}"
+        src: "UUID={{ sdb_etcd_uuid.stdout }}"
+        fstype: xfs
+        opts: defaults,noatime,nofail,x-systemd.device-timeout=30
+        state: mounted
+
+- name: Create K3s configuration directory
+
+  ansible.builtin.file:
+    path: "{{ k3s_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Deploy K3s control plane config.yaml
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ k3s_config_dir }}/config.yaml"
+    owner: root
+    group: root
+    mode: '0600'
+  register: k3s_config_result
+
+- name: Ensure K3s server manifests directory exists
+  ansible.builtin.file:
+    path: /var/lib/rancher/k3s/server/manifests
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Deploy kube-vip HA Virtual IP DaemonSet manifest (192.168.0.41)
+  ansible.builtin.template:
+    src: kube-vip.yaml.j2
+    dest: /var/lib/rancher/k3s/server/manifests/kube-vip.yaml
+    owner: root
+    group: root
+    mode: '0644'
+  when: kube_vip_enabled | default(true)
+
+- name: Check if K3s binary is already installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s
+  register: k3s_bin_stat
+
+- name: Check if K3s systemd service file is installed
+  ansible.builtin.stat:
+    path: /etc/systemd/system/k3s.service
+  register: k3s_service_stat
+
+- name: Get currently installed K3s version
+  ansible.builtin.command:
+    cmd: /usr/local/bin/k3s --version
+  register: k3s_installed_version
+  changed_when: false
+  failed_when: false
+  when: k3s_bin_stat.stat.exists
+
+- name: Download and install K3s server binary and systemd service
+  when: >-
+    (not k3s_bin_stat.stat.exists) or (not k3s_service_stat.stat.exists)
+    or (k3s_version not in (k3s_installed_version.stdout | default('')))
+  block:
+    - name: Download K3s official install script
+      ansible.builtin.get_url:
+        url: "https://get.k3s.io"
+        dest: /root/k3s-install.sh
+        mode: '0755'
+
+    - name: Execute K3s server installation script (binary & service registration)
+      ansible.builtin.command:
+        cmd: bash /root/k3s-install.sh
+      environment:
+        INSTALL_K3S_VERSION: "{{ k3s_version }}"
+        INSTALL_K3S_EXEC: "server"
+        INSTALL_K3S_SKIP_START: "true"
+        INSTALL_K3S_SKIP_SELINUX_RPM: "true"
+      changed_when: true
+
+    - name: Remove K3s install script
+      ansible.builtin.file:
+        path: /root/k3s-install.sh
+        state: absent
+
+- name: Restore SELinux file contexts on K3s directories & binaries
+  ansible.builtin.command:
+    cmd: restorecon -R -v /etc/rancher/k3s /var/lib/rancher/k3s /usr/local/bin/k3s /etc/systemd/system/k3s.service
+  when: ansible_facts['os_family'] == 'RedHat'
+  register: restorecon_result
+  failed_when: restorecon_result.rc != 0 and 'No such file' not in restorecon_result.stderr
+  changed_when: false
+
+- name: Clean up stale node registration, password secret, and etcd member before (re)joining
+  ansible.builtin.shell: |
+    /usr/local/bin/k3s kubectl delete node {{ inventory_hostname }} --ignore-not-found=true --timeout=30s
+    /usr/local/bin/k3s kubectl delete secret -n kube-system {{ inventory_hostname }}.node-password --ignore-not-found=true
+    /usr/local/bin/k3s kubectl delete secret -n kube-system k3s.{{ inventory_hostname }}.node-password --ignore-not-found=true
+    ETCD_MEMBER_ID=$(/usr/local/bin/k3s etcdctl member list 2>/dev/null | grep "{{ inventory_hostname }}" | cut -d',' -f1 || echo "")
+    if [ -n "$ETCD_MEMBER_ID" ]; then
+      /usr/local/bin/k3s etcdctl member remove "$ETCD_MEMBER_ID" 2>/dev/null || true
+    fi
+  delegate_to: "{{ k3s_join_target_control_plane }}"
+  when: k3s_cluster_already_exists and not (k3s_already_initialized.stat.exists | default(false))
+  failed_when: false
+  changed_when: false
+
+- name: Wait for control plane join target API port 6443 to be responsive before joining
+  ansible.builtin.wait_for:
+    host: "{{ k3s_join_target_address }}"
+    port: "{{ k3s_api_port }}"
+    delay: 2
+    timeout: 120
+  when: inventory_hostname != k3s_join_target_control_plane
+
+
+- name: Start or restart K3s server service
+  block:
+    - name: Ensure K3s server service is started or restarted on config change
+      ansible.builtin.systemd:
+        name: k3s
+        daemon_reload: true
+        state: "{{ 'restarted' if (k3s_config_result.changed and k3s_bin_stat.stat.exists and k3s_service_stat.stat.exists) else 'started' }}"
+        enabled: true
+      register: k3s_start_result
+      until: k3s_start_result is not failed
+      retries: 5
+      delay: 6
+
+
+  rescue:
+    - name: Capture K3s service status and journalctl logs on startup failure
+      ansible.builtin.command:
+        cmd: journalctl -xeu k3s.service -n 100 --no-pager
+      register: k3s_journal_logs
+      changed_when: false
+
+    - name: Display K3s journal logs to console
+      ansible.builtin.debug:
+        var: k3s_journal_logs.stdout_lines
+
+    - name: Fail task with explicit startup error summary
+      ansible.builtin.fail:
+        msg: "k3s.service failed to start or restart. Review detailed journalctl output in log above."
+
+
+
+- name: Wait for K3s local API server port 6443 to be responsive
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ k3s_api_port }}"
+    delay: 5
+    timeout: 180
+
+- name: Wait for control plane node to reach Ready status in Kubernetes
+  ansible.builtin.command:
+    cmd: /usr/local/bin/k3s kubectl get node {{ inventory_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+  delegate_to: "{{ k3s_join_target_control_plane }}"
+  register: node_ready_check
+  until: node_ready_check.rc == 0 and node_ready_check.stdout == "True"
+  retries: 30
+  delay: 6
+  changed_when: false
+
+
+
+- name: Wait for kube-vip API Virtual IP ({{ kube_vip_address }}:{{ k3s_api_port }}) to be responsive
+  ansible.builtin.wait_for:
+    host: "{{ kube_vip_address }}"
+    port: "{{ k3s_api_port }}"
+    delay: 5
+    timeout: 120
+  when: kube_vip_enabled | default(true) and inventory_hostname == k3s_primary_control_plane
+
+# --- Kubeconfig Extraction (Primary Control Plane Node Only) ---
+- name: Process and extract Kubeconfig on primary control plane node
+  when: inventory_hostname == k3s_primary_control_plane
+  block:
+    - name: Ensure local credentials directory exists on Ansible controller
+      ansible.builtin.file:
+        path: "{{ k3s_local_credentials_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
+
+    - name: Read cluster kubeconfig from primary node
+      ansible.builtin.slurp:
+        src: /etc/rancher/k3s/k3s.yaml
+      register: raw_kubeconfig
+
+    - name: Save modified kubeconfig with kube-vip API endpoint to local controller
+      ansible.builtin.copy:
+        content: "{{ raw_kubeconfig['content'] | b64decode | regex_replace('https://127.0.0.1:6443', 'https://' + (kube_vip_address | default(ansible_host)) + ':6443') }}"
+        dest: "{{ k3s_kubeconfig_path }}"
+        mode: '0644'
+      delegate_to: localhost
+      run_once: true
+
+    - name: Push kubeconfig to HashiCorp Vault KV v2 (if VAULT_TOKEN is set)
+      when: lookup('env', 'VAULT_TOKEN') != ''
+      ansible.builtin.uri:
+        url: "{{ lookup('env', 'VAULT_ADDR') | default('https://192.168.0.40:8200', true) }}/v1/{{ vault_cluster_secret_path | default('secret/data/k3s-' + (cluster_environment | default('stage')) + '/cluster') }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          data:
+            kubeconfig: "{{ raw_kubeconfig['content'] | b64decode | regex_replace('https://127.0.0.1:6443', 'https://' + (kube_vip_address | default(ansible_host)) + ':6443') }}"
+            api_endpoint: "https://{{ kube_vip_address | default(ansible_host) }}:{{ k3s_api_port }}"
+            primary_node: "{{ inventory_hostname }}"
+            kube_vip_address: "{{ kube_vip_address }}"
+            tls_san_domain: "{{ kube_vip_hostname }}"
+        validate_certs: false # Self-signed TLS on Vault load balancer (192.168.0.40:8200)
+        status_code: [200, 204]
+      delegate_to: localhost
+      run_once: true
+      failed_when: false
+

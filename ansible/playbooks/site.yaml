@@ -1,0 +1,94 @@
+---
+# ==============================================================================
+# End-to-End Orchestration: OS Hardening & K3s High Availability Cluster Rollout
+# ==============================================================================
+
+# --- Step 0: Ensure all 6 VMs on guardian are online and reachable via SSH ---
+# any_errors_fatal here so an unreachable node (e.g. inventory holding the
+# unroutable internal VLAN IP instead of the management address) aborts the
+# run immediately, instead of Ansible dropping it from later plays and
+# k3s:verify failing ~15 minutes later on a short node count.
+- name: Wait for all K3s nodes to become reachable via SSH
+  hosts: all
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Wait for SSH connectivity
+      ansible.builtin.wait_for_connection:
+        delay: 3
+        timeout: 180
+
+# --- Step 1: Base System Tuning, Sysctl, Swap, and Kernel Modules ---
+# k3s_common no longer reboots nodes (see its tasks/main.yaml), so there's
+# no fleet-wide reboot storm to guard against here anymore - two nodes at
+# a time.
+- name: Apply OS-level and Kubernetes system settings across all nodes
+  hosts: all
+  gather_facts: true
+  become: true
+  serial: 2
+  roles:
+    - role: k3s_common
+
+# --- Step 2: Bootstrap Primary Control Plane Node (etcd Init) ---
+- name: Initialize Primary K3s Control Plane Node
+  hosts: k3s_control_plane[0]
+  gather_facts: true
+  become: true
+  roles:
+    - role: k3s_control_plane
+
+# --- Step 3: Join Secondary Control Plane Nodes (etcd Quorum) ---
+- name: Join Secondary K3s Control Plane Nodes into HA Cluster
+  hosts: k3s_control_plane:!k3s_control_plane[0]
+  gather_facts: true
+  become: true
+  serial: 1
+  roles:
+    - role: k3s_control_plane
+
+# --- Step 4: Join Worker Nodes ---
+- name: Join Worker Nodes to K3s Cluster
+  hosts: k3s_workers
+  gather_facts: true
+  become: true
+  serial: 2
+  roles:
+    - role: k3s_worker
+
+# --- Step 5: Post-Deployment Verification & Cluster Health ---
+- name: Verify K3s Cluster Status and Node Health
+  hosts: k3s_control_plane[0]
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Retrieve full cluster node status
+      ansible.builtin.command:
+        cmd: /usr/local/bin/k3s kubectl get nodes -o wide
+      register: cluster_nodes_status
+      changed_when: false
+
+    - name: Display K3s Cluster Nodes
+      ansible.builtin.debug:
+        msg: "{{ cluster_nodes_status.stdout_lines }}"
+
+    - name: Check system pods running status
+      ansible.builtin.command:
+        cmd: /usr/local/bin/k3s kubectl get pods -A -o wide
+      register: cluster_pods_status
+      changed_when: false
+
+    - name: Display K3s System Pods
+      ansible.builtin.debug:
+        msg: "{{ cluster_pods_status.stdout_lines }}"
+
+    - name: Verify kube-vip HA Virtual IP status
+      ansible.builtin.command:
+        cmd: /usr/local/bin/k3s kubectl get ds,pods -n kube-system -l app.kubernetes.io/name=kube-vip-ds -o wide
+      register: kube_vip_status
+      changed_when: false
+
+    - name: Display kube-vip HA Status
+      ansible.builtin.debug:
+        msg: "{{ kube_vip_status.stdout_lines }}"
+

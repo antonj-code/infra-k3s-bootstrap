@@ -1,0 +1,25 @@
+---
+# --- Step 1: Bootstrap Primary Control Plane ---
+- name: Bootstrap Primary K3s Control Plane Node
+  hosts: k3s_control_plane[0]
+  gather_facts: true
+  become: true
+  roles:
+    - role: k3s_control_plane
+
+# --- Step 2: Join Secondary Control Planes Sequentially ---
+- name: Join Secondary K3s Control Plane Nodes
+  hosts: k3s_control_plane:!k3s_control_plane[0]
+  gather_facts: true
+  become: true
+  serial: 1
+  roles:
+    - role: k3s_control_plane
+
+# --- Step 3: Join Worker Nodes ---
+- name: Join Worker Nodes to Cluster
+  hosts: k3s_workers
+  gather_facts: true
+  become: true
+  roles:
+    - role: k3s_worker

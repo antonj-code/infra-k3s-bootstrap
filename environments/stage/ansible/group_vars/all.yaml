@@ -1,0 +1,62 @@
+---
+# Global K3s Cluster Configuration (STAGE)
+k3s_version: "v1.30.4+k3s1"
+k3s_template_version: "1.0.0"
+k3s_token: "k3s-cluster-token-secret-jnet-labs-guardian-stage"
+
+# Network & Pod Subnets
+k3s_cluster_cidr: "10.42.0.0/16"
+k3s_service_cidr: "10.43.0.0/16"
+k3s_cluster_dns: "10.43.0.10"
+
+# CNI & Proxy Tuning
+k3s_flannel_backend: "host-gw"
+k3s_kube_proxy_mode: "ipvs"
+k3s_ipvs_strict_arp: true
+k3s_selinux: true
+
+# Highly Available Control Plane VIP (kube-vip)
+kube_vip_enabled: true
+kube_vip_address: "192.168.0.41"
+kube_vip_hostname: "k3s-stage.jnet.lan"
+kube_vip_interface: "{{ ansible_facts['default_ipv4']['interface'] | default(ansible_default_ipv4.interface | default('eth0')) }}"
+kube_vip_version: "v0.8.2"
+
+# Control Plane Primary / Initializer (Dynamically derived from inventory)
+k3s_primary_control_plane: "{{ groups['k3s_control_plane'][0] }}"
+k3s_primary_control_plane_ip: "{{ hostvars[groups['k3s_control_plane'][0]]['k3s_internal_ip'] }}"
+k3s_api_port: 6443
+k3s_api_server_ip: "{{ kube_vip_address }}"
+k3s_api_endpoint: "https://{{ kube_vip_address }}:{{ k3s_api_port }}"
+
+# TLS SANs for Kubernetes API Server
+k3s_tls_sans:
+  - "192.168.0.41"
+  - "k3s-test.jnet.lan"
+  - "k3s-stage.jnet.lan"
+  - "k3s.jnet.lan"
+  - "guardian"
+  - "guardian.jnet.lan"
+  - "127.0.0.1"
+  - "localhost"
+
+# Cluster Monitoring & Observability Grouping
+cluster_environment: "stage"
+monitoring_enabled: true
+monitoring_cluster_name: "k3s-stage"
+monitoring_scrape_interval: "15s"
+
+# Vault Secrets Path
+vault_cluster_secret_path: "secret/data/k3s-stage/cluster"
+vault_credentials_secret_path: "secret/data/k3s-stage/credentials"
+vault_bootstrap_secret_path: "secret/data/k3s-stage/bootstrap"
+
+# Disabled Built-in Services
+k3s_disable_components:
+  - "traefik"
+  - "servicelb"
+  - "helm-controller"
+
+# Local directories for credential storage & kubeconfig
+k3s_local_credentials_dir: "{{ playbook_dir }}/../../credentials/stage"
+k3s_kubeconfig_path: "{{ k3s_local_credentials_dir }}/kubeconfig.yaml"
