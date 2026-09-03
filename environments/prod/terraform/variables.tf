@@ -117,10 +117,10 @@ variable "control_plane_config" {
     etcd_disk_size = number
   })
   default = {
-    cores          = 4
-    memory         = 8192
-    disk_size      = 50
-    etcd_disk_size = 30
+    cores          = 2
+    memory         = 4096
+    disk_size      = 32
+    etcd_disk_size = 20
   }
 }
 variable "worker_config" {
@@ -131,10 +131,10 @@ variable "worker_config" {
     data_disk_size = number
   })
   default = {
-    cores          = 8
-    memory         = 16384
-    disk_size      = 50
-    data_disk_size = 100
+    cores          = 4
+    memory         = 4096
+    disk_size      = 32
+    data_disk_size = 50
   }
 }
 variable "kube_vip_address" {

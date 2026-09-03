@@ -55,8 +55,8 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 
 | Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 30 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS | Proxmox Host |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`k3s-cp-p-<rand>`** | Control Plane (x3) | `3001 - 3003` | DHCP (`192.168.0.x`) | `10.30.30.11 - 13` | 4 | 8192 MB | 50 GB | 30 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `colossus` |
-| **`k3s-wk-p-<rand>`** | Worker / Storage (x5)| `3011 - 3015` | DHCP (`192.168.0.x`) | `10.30.30.21 - 25` | 8 | 16384 MB | 50 GB | 100 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
+| **`k3s-cp-p-<rand>`** | Control Plane (x3) | `3001 - 3003` | DHCP (`192.168.0.x`) | `10.30.30.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `colossus` |
+| **`k3s-wk-p-<rand>`** | Worker / Storage (x5)| `3011 - 3015` | DHCP (`192.168.0.x`) | `10.30.30.21 - 25` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
 
 ---
 
