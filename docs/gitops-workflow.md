@@ -42,16 +42,31 @@ The root orchestrator ([`.gitlab-ci.yml`](../.gitlab-ci.yml)) delegates environm
 
 ---
 
-## 3. How Promotion to PROD Works
+## 3. Triggering a Pipeline for PROD Environment Only
 
-Once changes are tested and verified in STAGE, you have **three flexible ways** to promote to PROD:
+If you want to execute a deployment pipeline that runs **exclusively against PROD (`colossus.jnet.lan`)** while completely skipping STAGE, you can use any of the following methods:
 
-### Method A: Promotion via Git Release Tag (Recommended for GitOps)
+---
 
-Pushing a version tag (`v*` or `prod-*`) automatically skips STAGE and triggers the **PROD child pipeline**:
+### Option 1: Trigger via GitLab Web UI (Zero CLI needed)
+
+1. In GitLab, navigate to: **CI/CD $\rightarrow$ Pipelines $\rightarrow$ Run Pipeline**.
+2. Under **Variables**, configure:
+   - **`TARGET_ENV`**: Select **`PROD`** from the dropdown.
+   - **`PIPELINE_ACTION`**: Select **`deploy`** (Default).
+3. Click the blue **Run Pipeline** button.
+
+> [!NOTE]
+> When `TARGET_ENV=PROD` is set, the root pipeline rules set `stage:pipeline` to `never` and immediately trigger `prod:pipeline`. STAGE on `guardian` is **not touched**.
+
+---
+
+### Option 2: Trigger via Git Release Tag (`make promote`)
+
+In GitOps, production releases are typically triggered via version tags:
 
 ```bash
-# Using Makefile helper:
+# Using Makefile shortcut:
 make promote TAG=v1.1.0
 
 # Or using Git directly:
@@ -59,35 +74,25 @@ git tag -a v1.1.0 -m "Release v1.1.0 promoted to PROD"
 git push origin v1.1.0
 ```
 
-1. GitLab detects the tag push.
-2. Global validation runs.
-3. The **PROD child pipeline** immediately executes against **`colossus`** (plans, provisions VMs 3001-3015, configures K3s, and verifies 8/8 nodes).
+- **Pipeline Behavior**:
+  - GitLab detects the version tag (`v*` or `prod-*`).
+  - STAGE is **completely bypassed** (`when: never`).
+  - The **PROD child pipeline** immediately executes against **`colossus`** (provisions VMs `3001-3015`, hardens AlmaLinux 9, configures K3s with VIP `192.168.0.44`, and asserts 8/8 nodes Ready).
 
 ---
 
-### Method B: One-Click Promotion Button in GitLab UI
+### Option 3: One-Click Manual Promotion on `main`
 
-When you push or merge code to `main`:
-
-1. The **STAGE child pipeline** runs automatically and validates the 6 STAGE nodes on `guardian`.
-2. Once STAGE reaches `Passed`, a manual **`prod:pipeline`** trigger button appears in the pipeline graph on `main`.
-3. Click the **Play (▶)** button on `prod:pipeline` to deploy to PROD.
+When changes are pushed to `main`, STAGE runs first. Once STAGE finishes:
+1. Open the pipeline view in GitLab.
+2. In the **`deploy:prod`** stage, click the manual **Play (▶)** button on **`prod:pipeline`**.
+3. This spawns the isolated PROD child pipeline.
 
 ```
-[ validate ] ──────► [ deploy:stage (Auto) ] ──────► [ deploy:prod (Play ▶ Button) ]
-                           │                                     │
-                 (STAGE Child Pipeline)                (PROD Child Pipeline)
+[ validate ] ──────► [ deploy:stage (Runs Auto) ] ──────► [ deploy:prod (Manual Play ▶) ]
+                             │                                       │
+                   (STAGE on guardian)                     (PROD on colossus)
 ```
-
----
-
-### Method C: Parameterized Run via GitLab Web UI
-
-1. In GitLab, navigate to **CI/CD $\rightarrow$ Pipelines $\rightarrow$ Run Pipeline**.
-2. Set the variables:
-   - **`TARGET_ENV`**: Select **`PROD`**
-   - **`PIPELINE_ACTION`**: Select **`deploy`**
-3. Click **Run Pipeline** to deploy directly to PROD.
 
 ---
 
