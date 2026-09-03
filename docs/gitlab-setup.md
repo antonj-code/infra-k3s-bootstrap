@@ -47,68 +47,72 @@ The public keys are injected into Cloud-Init VMs via Terraform, while the privat
 ## 3. GitLab CI/CD Variables Setup
 
 In your GitLab web interface:
-1. Navigate to: `https://gitbox.jnet.lan/jnet-labs/infra-k3s-bootstrap`
-2. In the left sidebar, go to **Settings** $\rightarrow$ **CI/CD**
-3. Expand the **Variables** section $\rightarrow$ Click **Add variable**
+1. Navigate to your repository: `https://gitbox.jnet.lan/jnet-labs/infra-k3s-bootstrap`
+2. In the left sidebar, click **Settings** $\rightarrow$ **CI/CD**
+3. Scroll down and expand the **Variables** section
+4. Click **Add variable** for each of the following variables:
 
-### 3.1 Recommended GitOps Model (Minimal Variables in GitLab)
+### 3.1 Required Root-of-Trust Variables (Add to GitLab CI/CD)
 
-In a pure GitOps pipeline, **GitLab only needs the bootstrap root of trust credentials**. The pipeline automatically retrieves SSH deploy keys, K3s bootstrap tokens, and network parameters directly from Vault (`https://192.168.0.40:8200`):
+| Variable Key | Type | Environments | Protected | Masked | Value Example / Description |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`VAULT_ADDR`** | Variable | All | No | No | `https://192.168.0.40:8200` |
+| **`VAULT_SKIP_VERIFY`** | Variable | All | No | No | `true` |
+| **`VAULT_TOKEN`** | Variable | All | Yes | **Yes** | Your Vault administrative or scoped bootstrap token (`hvs.CAES...`) |
+| **`TF_VAR_pve_host_1_endpoint`** | Variable | All | No | No | `https://colossus.jnet.lan:8006/` |
+| **`TF_VAR_pve_host_1_api_token`**| Variable | All | Yes | **Yes** | `terraform-ci@pve!gitlab-runner=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
+| **`TF_VAR_pve_host_1_node_name`**| Variable | All | No | No | `colossus` |
+| **`TF_VAR_pve_host_2_endpoint`** | Variable | All | No | No | `https://guardian.jnet.lan:8006/` |
+| **`TF_VAR_pve_host_2_api_token`**| Variable | All | Yes | **Yes** | `terraform-ci@pve!gitlab-runner=yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy` |
+| **`TF_VAR_pve_host_2_node_name`**| Variable | All | No | No | `guardian` |
 
-| Variable Key | Type | Protected | Masked | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| **`VAULT_ADDR`** | Variable | Yes | No | `https://192.168.0.40:8200` (Vault Load Balancer) |
-| **`VAULT_SKIP_VERIFY`** | Variable | Yes | No | `true` (Self-signed certificate) |
-| **`VAULT_TOKEN`** | Variable | **Yes** | **Yes** | Scoped Vault token with `k3s-stage-bootstrap` / `k3s-prod-bootstrap` policy |
-| **`TF_VAR_pve_host_1_endpoint`** | Variable | Yes | No | `https://colossus.jnet.lan:8006/` |
-| **`TF_VAR_pve_host_1_api_token`** | Variable | **Yes** | **Yes** | `terraform-ci@pve!gitlab-runner=xxxxxxxx...` (Host 1: Colossus) |
-| **`TF_VAR_pve_host_2_endpoint`** | Variable | Yes | No | `https://guardian.jnet.lan:8006/` |
-| **`TF_VAR_pve_host_2_api_token`** | Variable | **Yes** | **Yes** | `terraform-ci@pve!gitlab-runner=xxxxxxxx...` (Host 2: Guardian) |
-| **`TF_VAR_pve_endpoint`** *(Fallback)* | Variable | Yes | No | `https://guardian.jnet.lan:8006/` |
-| **`TF_VAR_pve_api_token`** *(Fallback)* | Variable | **Yes** | **Yes** | `terraform-ci@pve!gitlab-runner=xxxxxxxx...` |
+---
 
-### 3.2 Optional Manual Overrides
+### 3.2 How Secrets Flow at Pipeline Runtime
 
-If you prefer providing static SSH keys directly in GitLab instead of pulling from Vault:
-
-| Variable Key | Type | Protected | Masked | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| **`TF_VAR_ssh_public_keys`** | Variable | Optional | No | Single public key string or JSON array: `ssh-ed25519 AAAAC3Nza...` |
-| **`SSH_PRIVATE_KEY`** | Variable | Optional | **No** *(Unchecked)* | Entire content of private deploy key |
+```
+[ GitLab CI Runner ]
+        │
+        ├── 1. Reads $VAULT_TOKEN and $VAULT_ADDR from GitLab CI Variables
+        │
+        ├── 2. Queries HashiCorp Vault (https://192.168.0.40:8200)
+        │      ├── secret/data/k3s-stage/credentials  (SSH keys, guardian token)
+        │      └── secret/data/k3s-prod/credentials   (SSH keys, colossus token)
+        │
+        ├── 3. Injects deploy public key into Cloud-Init VMs via Terraform
+        │
+        ├── 4. Authenticates via SSH private key loaded into ssh-agent memory
+        │
+        └── 5. Saves cluster admin kubeconfig back to Vault upon deployment
+```
 
 > [!TIP]
-> **Pure GitOps Flow**:
-> 1. When a commit is pushed to `main`, GitLab CI triggers `stage:vault:seed`.
-> 2. `stage:vault:seed` checks Vault; if SSH keys or K3s join tokens don't exist yet, it generates and stores them in Vault.
-> 3. `terraform:apply` and `ansible:configure` query Vault at runtime to inject keys into VMs and memory.
-> 4. Upon completion, Ansible pushes the cluster `kubeconfig` to Vault (`secret/data/k3s-stage/cluster` or `secret/data/k3s-prod/cluster`).
-> 5. **Result**: Zero static secrets checked into Git, and end-to-end automation!
+> **Zero Static Secrets in Git**: Notice that no passwords, tokens, or private SSH keys are stored in Git. Everything is either pulled dynamically from Vault or passed securely in runner memory.
 
 ---
 
-## 4. GitLab Managed Terraform State Backends (Automatic)
+## 4. GitLab Managed Terraform State Backends
 
-The pipeline is pre-configured to use GitLab's built-in HTTP state management for each environment:
+You do **not** need to create or configure external S3 buckets or database backends. The repository automatically leverages GitLab's native HTTP Managed Terraform State:
 
-- **Stage State Address**: `${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/k3s-stage`
-- **Prod State Address**: `${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/k3s-prod`
-- **Authentication**: Automatically handled using GitLab's built-in `${CI_JOB_TOKEN}` and `gitlab-ci-token`.
-- **Locking**: GitLab automatically acquires a POST lock during `terraform plan`/`apply` and releases it with DELETE upon job completion.
+- **STAGE State Location**: Under GitLab **Operate** $\rightarrow$ **Terraform states** $\rightarrow$ `k3s-stage`
+- **PROD State Location**: Under GitLab **Operate** $\rightarrow$ **Terraform states** $\rightarrow$ `k3s-prod`
+- **Lock Management**: Handled automatically via `${CI_JOB_TOKEN}`. When a job runs, GitLab acquires an exclusive lock preventing race conditions, and automatically unlocks upon job completion.
 
 ---
 
-## 5. GitLab Runner Requirements
+## 5. GitLab Runner Network Requirements
 
-The pipeline uses standard Docker images:
-- `hashicorp/terraform:1.8.5` (Stages: `validate`, `plan:*`, `apply:*`)
-- `alpine/ansible:2.21.0` (Stages: `validate`, `configure:*`)
-- `bitnami/kubectl:latest` (Stages: `verify:*`)
-
-**Network Connectivity Requirement**:
-The GitLab Runner executing the jobs must have Layer 3 network access to:
-- Proxmox API: `https://guardian.jnet.lan:8006/` and `https://colossus.jnet.lan:8006/` (TCP `8006`)
-- Vault Load Balancer: `https://192.168.0.40:8200` (TCP `8200`)
-- Provisioned VM Management Network: `192.168.0.0/24` (SSH TCP `22`, K3s API TCP `6443`)
+The Docker executor runner hosting the jobs needs Layer 3 network access to:
+- **Proxmox VE Hosts**:
+  - `guardian.jnet.lan:8006` (`https://guardian.jnet.lan:8006/`)
+  - `colossus.jnet.lan:8006` (`https://colossus.jnet.lan:8006/`)
+- **HashiCorp Vault**:
+  - `192.168.0.40:8200` (`https://192.168.0.40:8200`)
+- **VM Management Network**:
+  - Subnet `192.168.0.0/24` (SSH TCP `22`, K3s API TCP `6443`)
+- **DNS Resolution**:
+  - Must be able to resolve `*.jnet.lan` or use configured DNS servers (`192.168.0.168`, `192.168.0.127`).
 
 ---
 
