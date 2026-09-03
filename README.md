@@ -134,6 +134,7 @@ make repave ENV=stage            # Full VM rolling rebuild from base template
 
 Detailed guides and runbooks are available in the [`docs/`](docs/) directory:
 
+- [**GitOps Workflow & Promotion Guide**](docs/gitops-workflow.md): Comprehensive guide covering child pipelines, promoting code from STAGE to PROD, automated node recovery via pipeline, and release tag workflows.
 - [**Architecture & Hardware Layout**](docs/architecture.md): Dual-network topology (DHCP management & VLAN cluster network), kube-vip HA, Flannel `host-gw`, IPVS proxy, dedicated etcd and Longhorn storage disks.
 - [**GitLab CI/CD Setup**](docs/gitlab-setup.md): Complete guide for GitLab runner setup, HTTP state backend, CI/CD variables, and multi-environment pipeline flow.
 - [**HashiCorp Vault Secrets Management**](docs/vault-integration.md): Structure of `secret/data/k3s-stage/*` and `secret/data/k3s-prod/*`, automated seeding, ACL policies, and kubeconfig synchronization.
