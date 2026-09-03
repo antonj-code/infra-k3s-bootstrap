@@ -11,12 +11,32 @@ This runbook outlines how to safely destroy, recreate, and rejoin any single cor
 
 ---
 
-## 2. One-Click Automated Node Redeployment
+## 2. Triggering Node Recovery Directly via GitLab CI/CD (Recommended)
 
-We provide [`scripts/redeploy_node.sh`](../scripts/redeploy_node.sh) to execute the complete replacement lifecycle in a single command:
+You can trigger a single-node rebuild and recovery directly from the **GitLab UI**:
+
+1. Go to **CI/CD $\rightarrow$ Pipelines $\rightarrow$ Run Pipeline**.
+2. Set the variables:
+   - **`TARGET_ENV`**: `STAGE` or `PROD`
+   - **`PIPELINE_ACTION`**: `recover-node`
+   - **`NODE_NAME`**: The specific node to rebuild (e.g., `k3s-wk-p-g7h8` or `k3s-cp-s-a1b2`)
+3. Click **Run Pipeline**.
+
+The pipeline automatically:
+1. Drains active pods and evicts workloads.
+2. Destroys and re-clones the specific VM in Proxmox using Terraform `-replace`.
+3. Discovers the new DHCP IP address.
+4. Applies CIS hardening, mounts storage disks with XFS, and rejoins the node to the K3s cluster.
+5. Verifies cluster readiness (`kubectl get nodes -o wide`).
+
+---
+
+## 3. CLI / Local Redeployment
+
+If running from a terminal or bastion host:
 
 ```bash
-# Redeploy a worker node in STAGE (default):
+# Redeploy a worker node in STAGE:
 bash scripts/redeploy_node.sh k3s-wk-s-g7h8 stage
 
 # Redeploy a control plane node in PROD:

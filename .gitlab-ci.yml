@@ -28,6 +28,17 @@ variables:
       - "all"
     description: "Target environment to execute child deployment pipeline"
 
+  PIPELINE_ACTION:
+    value: "deploy"
+    options:
+      - "deploy"
+      - "recover-node"
+    description: "Action to execute: 'deploy' (full cluster rollout) or 'recover-node' (single VM rebuild & rejoin)"
+
+  NODE_NAME:
+    value: ""
+    description: "Node hostname to rebuild during 'recover-node' (e.g. k3s-wk-p-g7h8, k3s-cp-p-a1b2, k3s-wk-s-g7h8)"
+
 stages:
   - validate
   - deploy:stage

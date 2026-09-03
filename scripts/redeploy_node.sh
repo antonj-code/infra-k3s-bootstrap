@@ -77,13 +77,19 @@ fi
 echo "[STEP 2/4] Recreating VM in Proxmox via Terraform..."
 cd "${TF_DIR}"
 
-if [[ ! -f "terraform.auto.tfvars.json" && -f "${HOME}/.ssh/k3s_test_deploy_key.pub" ]]; then
-    CLEAN_KEY=$(cat "${HOME}/.ssh/k3s_test_deploy_key.pub" | sed 's/^[["'\'' ]*//;s/[]"'\'' ]*$//')
-    cat << EOF_JSON > terraform.auto.tfvars.json
+if [[ ! -f "terraform.auto.tfvars.json" ]]; then
+    PUB_KEY="${SSH_PUBLIC_KEY:-}"
+    if [[ -z "${PUB_KEY}" && -f "${HOME}/.ssh/k3s_${ENV}_deploy_key.pub" ]]; then
+        PUB_KEY=$(cat "${HOME}/.ssh/k3s_${ENV}_deploy_key.pub")
+    fi
+    if [[ -n "${PUB_KEY}" ]]; then
+        CLEAN_KEY=$(echo "${PUB_KEY}" | sed 's/^[["'\'' ]*//;s/[]"'\'' ]*$//')
+        cat << EOF_JSON > terraform.auto.tfvars.json
 {
   "ssh_public_keys": ["${CLEAN_KEY}"]
 }
 EOF_JSON
+    fi
 fi
 
 terraform apply -replace="${TF_RESOURCE}" -auto-approve -input=false

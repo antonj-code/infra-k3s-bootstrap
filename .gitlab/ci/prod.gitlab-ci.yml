@@ -1,5 +1,5 @@
 # ==============================================================================
-# PROD Cluster GitOps Deployment Pipeline
+# PROD Cluster GitOps Deployment & Node Recovery Pipeline
 # Targets: colossus.jnet.lan (VLAN 30, VIP 192.168.0.42, 8 Nodes: 3 CP + 5 WK)
 # ==============================================================================
 
@@ -9,6 +9,7 @@ stages:
   - apply
   - configure
   - verify
+  - recover
 
 variables:
   ANSIBLE_ROOT: "${CI_PROJECT_DIR}/ansible"
@@ -24,6 +25,8 @@ prod:vault:seed:
   script:
     - bash scripts/vault_seed.sh prod
   rules:
+    - if: $PIPELINE_ACTION == "recover-node"
+      when: never
     - if: $VAULT_TOKEN != null && $VAULT_TOKEN != ""
       when: on_success
     - when: manual
@@ -73,6 +76,10 @@ prod:terraform:plan:
       - ${CI_PROJECT_DIR}/environments/prod/terraform/.terraform.lock.hcl
       - ${CI_PROJECT_DIR}/environments/prod/terraform/terraform.auto.tfvars.json
     expire_in: 7 days
+  rules:
+    - if: $PIPELINE_ACTION == "recover-node"
+      when: never
+    - when: on_success
 
 prod:terraform:apply:
   stage: apply
@@ -84,6 +91,9 @@ prod:terraform:apply:
     TF_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/k3s-prod"
   dependencies:
     - prod:terraform:plan
+  environment:
+    name: prod
+    url: https://k3s-prod.jnet.lan:6443
   before_script:
     - apk add --no-cache curl jq || true
     - cd ${TF_ROOT}
@@ -111,9 +121,6 @@ prod:terraform:apply:
         -backend-config="unlock_method=DELETE" \
         -backend-config="retry_wait_min=5" \
         -backend-config="skip_cert_verification=true"
-  environment:
-    name: prod
-    url: https://k3s-prod.jnet.lan:6443
   script:
     - terraform apply -auto-approve -input=false -lock=false -parallelism=1 || (sleep 10 && terraform apply -auto-approve -input=false -lock=false -parallelism=1)
   artifacts:
@@ -121,6 +128,10 @@ prod:terraform:apply:
     paths:
       - ${CI_PROJECT_DIR}/environments/prod/ansible/hosts.yaml
     expire_in: 7 days
+  rules:
+    - if: $PIPELINE_ACTION == "recover-node"
+      when: never
+    - when: on_success
 
 prod:ansible:configure:
   stage: configure
@@ -169,6 +180,10 @@ prod:ansible:configure:
     paths:
       - credentials/prod/
     expire_in: 30 days
+  rules:
+    - if: $PIPELINE_ACTION == "recover-node"
+      when: never
+    - when: on_success
 
 prod:k3s:verify:
   stage: verify
@@ -187,3 +202,70 @@ prod:k3s:verify:
         echo "ERROR: Expected 8 Ready nodes (3 Control Plane + 5 Workers)."
         exit 1
       fi
+  rules:
+    - if: $PIPELINE_ACTION == "recover-node"
+      when: never
+    - when: on_success
+
+# -------------------------------------------------------------------
+# PROD: Single-Node Repaving & Disaster Recovery
+# -------------------------------------------------------------------
+prod:recover:node:
+  stage: recover
+  image: alpine/ansible:2.21.0
+  environment:
+    name: prod
+    url: https://k3s-prod.jnet.lan:6443
+  before_script:
+    - apk add --no-cache curl jq bash openssh-client py3-yaml python3
+    - |
+      if ! command -v terraform &> /dev/null; then
+        curl -sSL https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip -o /tmp/tf.zip
+        unzip -q /tmp/tf.zip -d /usr/local/bin
+        rm -f /tmp/tf.zip
+      fi
+    - |
+      if ! command -v kubectl &> /dev/null; then
+        curl -sSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
+        chmod +x /usr/local/bin/kubectl
+      fi
+    - eval $(ssh-agent -s)
+    - |
+      if [ -n "${VAULT_TOKEN}" ]; then
+        VAULT_ADDR="${VAULT_ADDR:-https://192.168.0.40:8200}"
+        VAULT_SECRET_JSON=$(curl -k -s -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/secret/data/k3s-prod/credentials" | jq -r '.data.data // empty')
+        if [ -n "${VAULT_SECRET_JSON}" ]; then
+          SSH_PRIVATE_KEY="${SSH_PRIVATE_KEY:-$(echo "${VAULT_SECRET_JSON}" | jq -r '.ssh_private_key // empty')}"
+          export PVE_API_TOKEN="${PVE_API_TOKEN:-$(echo "${VAULT_SECRET_JSON}" | jq -r '.pve_host_1_api_token // .pve_api_token // empty')}"
+          export PVE_ENDPOINT="${PVE_ENDPOINT:-$(echo "${VAULT_SECRET_JSON}" | jq -r '.pve_host_1_endpoint // .pve_endpoint // "https://colossus.jnet.lan:8006/"')}"
+          export PVE_NODE_NAME="${PVE_NODE_NAME:-$(echo "${VAULT_SECRET_JSON}" | jq -r '.pve_host_1_node_name // .pve_node_name // "colossus"')}"
+        fi
+        VAULT_CLUSTER_JSON=$(curl -k -s -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/secret/data/k3s-prod/cluster" | jq -r '.data.data // empty')
+        if [ -n "${VAULT_CLUSTER_JSON}" ]; then
+          mkdir -p "${CI_PROJECT_DIR}/credentials/prod"
+          echo "${VAULT_CLUSTER_JSON}" | jq -r '.kubeconfig // empty' > "${CI_PROJECT_DIR}/credentials/prod/kubeconfig.yaml"
+        fi
+      fi
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+    - cd ${CI_PROJECT_DIR}/environments/prod/terraform
+    - TF_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/k3s-prod"
+    - |
+      terraform init \
+        -backend-config="address=${TF_ADDRESS}" \
+        -backend-config="lock_address=${TF_ADDRESS}/lock" \
+        -backend-config="unlock_address=${TF_ADDRESS}/lock" \
+        -backend-config="username=gitlab-ci-token" \
+        -backend-config="password=${CI_JOB_TOKEN}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=DELETE" \
+        -backend-config="retry_wait_min=5" \
+        -backend-config="skip_cert_verification=true"
+  script:
+    - if [ -z "${NODE_NAME}" ]; then echo "[ERROR] NODE_NAME is required (e.g. k3s-wk-p-g7h8)."; exit 1; fi
+    - bash ${CI_PROJECT_DIR}/scripts/redeploy_node.sh "${NODE_NAME}" prod
+  rules:
+    - if: $PIPELINE_ACTION == "recover-node"
+      when: on_success
+    - when: manual
+      allow_failure: true
