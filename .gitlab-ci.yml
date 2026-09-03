@@ -70,7 +70,7 @@ ansible:validate:
     - ansible-playbook -i ../environments/stage/ansible/hosts.yaml --syntax-check playbooks/site.yaml
     - ansible-playbook -i ../environments/stage/ansible/hosts.yaml --syntax-check playbooks/provision_os.yaml
     - ansible-playbook -i ../environments/stage/ansible/hosts.yaml --syntax-check playbooks/provision_k3s.yaml
-    - ansible-playbook -i ../environments/stage/ansible/hosts.yaml --syntax-check playbooks/redeploy_node.yaml -e "target_node=k3s-wk-g7h8"
+    - ansible-playbook -i ../environments/stage/ansible/hosts.yaml --syntax-check playbooks/redeploy_node.yaml -e "target_node=k3s-wk-s-g7h8"
     - ansible-playbook -i ../environments/stage/ansible/hosts.yaml --syntax-check playbooks/rolling_update.yaml
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"

@@ -66,8 +66,8 @@ fi
 echo "[INFO] Verifying and discovering live DHCP IP addresses from Proxmox..."
 bash "${REPO_ROOT}/scripts/discover_node_ips.sh" "${ENV}"
 
-WORKER_NODES=$(grep -A 100 "k3s_workers:" "${INVENTORY_FILE}" | grep -E "^\s+k3s-wk-[a-z0-9]+:" | sed "s/://;s/^[ \t]*//" || echo "")
-CP_NODES=$(grep -A 30 "k3s_control_plane:" "${INVENTORY_FILE}" | grep -E "^\s+k3s-cp-[a-z0-9]+:" | sed "s/://;s/^[ \t]*//" || echo "")
+WORKER_NODES=$(grep -A 100 "k3s_workers:" "${INVENTORY_FILE}" | grep -E "^\s+k3s-wk-[a-z0-9-]+:" | sed "s/://;s/^[ \t]*//" || echo "")
+CP_NODES=$(grep -A 30 "k3s_control_plane:" "${INVENTORY_FILE}" | grep -E "^\s+k3s-cp-[a-z0-9-]+:" | sed "s/://;s/^[ \t]*//" || echo "")
 
 PRIMARY_CP=$(echo "${CP_NODES}" | head -n 1)
 SECONDARY_CPS=$(echo "${CP_NODES}" | tail -n +2)

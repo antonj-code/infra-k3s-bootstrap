@@ -1,11 +1,13 @@
 locals {
   parsed_ssh_keys       = can(tolist(var.ssh_public_keys)) ? tolist(var.ssh_public_keys) : [tostring(var.ssh_public_keys)]
   active_template_vm_id = lookup(var.template_registry, var.template_version, var.template_vm_id)
+  env_char              = substr(var.environment, 0, 1) # 's' for stage, 'p' for prod
 }
 
 # ==============================================================================
 # Random Suffix Generators for VM & Hostname Generation
-# Format: k3s-cp-<random> (Control Plane) and k3s-wk-<random> (Worker)
+# Format: k3s-cp-<env>-<random> (Control Plane) and k3s-wk-<env>-<random> (Worker)
+# e.g., k3s-cp-s-zzzz (stage) or k3s-cp-p-yyyy (prod)
 # ==============================================================================
 
 resource "random_string" "cp_suffix" {
@@ -32,13 +34,13 @@ resource "random_string" "worker_suffix" {
 
 resource "proxmox_virtual_environment_vm" "k3s_control_plane" {
   count     = var.control_plane_count
-  name      = "k3s-cp-${random_string.cp_suffix[count.index].result}"
+  name      = "k3s-cp-${local.env_char}-${random_string.cp_suffix[count.index].result}"
   node_name = var.pve_host_2_node_name
   vm_id     = var.control_plane_vmid_start + count.index
   pool_id   = var.resource_pool_id != "" ? var.resource_pool_id : null
   tags      = ["k3s", var.environment, "control-plane", "management", var.pve_host_2_node_name, "almalinux9", "cis2"]
 
-  description = "K3s Control Plane Management Node ${count.index + 1} (${var.environment} - k3s-cp-${random_string.cp_suffix[count.index].result} - ${var.pve_host_2_node_name} - template v${var.template_version})"
+  description = "K3s Control Plane Management Node ${count.index + 1} (${var.environment} - k3s-cp-${local.env_char}-${random_string.cp_suffix[count.index].result} - ${var.pve_host_2_node_name} - template v${var.template_version})"
 
   clone {
     vm_id = local.active_template_vm_id
@@ -162,13 +164,13 @@ resource "proxmox_virtual_environment_vm" "k3s_control_plane" {
 
 resource "proxmox_virtual_environment_vm" "k3s_workers" {
   count     = var.worker_count
-  name      = "k3s-wk-${random_string.worker_suffix[count.index].result}"
+  name      = "k3s-wk-${local.env_char}-${random_string.worker_suffix[count.index].result}"
   node_name = var.pve_host_2_node_name
   vm_id     = var.worker_vmid_start + count.index
   pool_id   = var.resource_pool_id != "" ? var.resource_pool_id : null
   tags      = ["k3s", var.environment, "worker", "compute", "storage", "longhorn", var.pve_host_2_node_name, "almalinux9", "cis2"]
 
-  description = "K3s Worker / Compute Node ${count.index + 1} (${var.environment} - k3s-wk-${random_string.worker_suffix[count.index].result} - ${var.pve_host_2_node_name} - template v${var.template_version})"
+  description = "K3s Worker / Compute Node ${count.index + 1} (${var.environment} - k3s-wk-${local.env_char}-${random_string.worker_suffix[count.index].result} - ${var.pve_host_2_node_name} - template v${var.template_version})"
 
   clone {
     vm_id = local.active_template_vm_id

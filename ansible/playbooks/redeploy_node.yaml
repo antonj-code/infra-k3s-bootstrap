@@ -3,8 +3,8 @@
 # Playbook: Automated Single-Node Redeployment & Recovery
 # ==============================================================================
 # Usage:
-#   ansible-playbook -i ../environments/stage/ansible/hosts.yaml playbooks/redeploy_node.yaml -e "target_node=k3s-wk-g7h8"
-#   ansible-playbook -i ../environments/prod/ansible/hosts.yaml playbooks/redeploy_node.yaml -e "target_node=k3s-cp-a1b2"
+#   ansible-playbook -i ../environments/stage/ansible/hosts.yaml playbooks/redeploy_node.yaml -e "target_node=k3s-wk-s-g7h8"
+#   ansible-playbook -i ../environments/prod/ansible/hosts.yaml playbooks/redeploy_node.yaml -e "target_node=k3s-cp-p-a1b2"
 # ==============================================================================
 
 - name: Validate target_node variable

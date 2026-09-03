@@ -23,7 +23,7 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 |  +---------------------------------------------------------------------------------------------+  |
 |  |                     Control Plane Nodes (HA Embedded etcd Quorum, N=3)                      |  |
 |  |  +-----------------------+   +-----------------------+   +-------------------------------+  |  |
-|  |  |      k3s-cp-XXXX      |   |      k3s-cp-YYYY      |   |          k3s-cp-ZZZZ          |  |  |
+|  |  |   k3s-cp-<s|p>-XXXX   |   |   k3s-cp-<s|p>-YYYY   |   |       k3s-cp-<s|p>-ZZZZ       |  |  |
 |  |  | Stage: VM 2001 (10.20.20.11) | Stage: VM 2002 (10.20.20.12) | Stage: VM 2003 (10.20.20.13) |  |
 |  |  | Prod:  VM 3001 (10.30.30.11) | Prod:  VM 3002 (10.30.30.12) | Prod:  VM 3003 (10.30.30.13) |  |
 |  |  | net0: DHCP (192.168.0.x)| net0: DHCP (192.168.0.x)| net0: DHCP (192.168.0.x)      |  |  |
@@ -34,7 +34,7 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 |  +---------------------------------------------------------------------------------------------+  |
 |  |                                      Worker Nodes                                           |  |
 |  |  +-----------------------+   +-----------------------+   +-------------------------------+  |  |
-|  |  |      k3s-wk-AAAA      |   |      k3s-wk-BBBB      |   |          k3s-wk-CCCC          |  |  |
+|  |  |   k3s-wk-<s|p>-AAAA   |   |   k3s-wk-<s|p>-BBBB   |   |       k3s-wk-<s|p>-CCCC       |  |  |
 |  |  | Stage: VM 2011 (10.20.20.21) | Stage: VM 2012 (10.20.20.22) | Stage: VM 2013 (10.20.20.23) |  |
 |  |  | Prod:  VM 3011 (10.30.30.21) | Prod:  VM 3012 (10.30.30.22) | Prod:  VM 3013 (10.30.30.23) |  |
 |  |  | net0: DHCP (192.168.0.x)| net0: DHCP (192.168.0.x)| net0: DHCP (192.168.0.x)      |  |  |
@@ -54,15 +54,15 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 
 | Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 20 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`k3s-cp-<rand>`** | Control Plane | `2001 - 2003` | DHCP (`192.168.0.x`) | `10.20.20.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) |
-| **`k3s-wk-<rand>`** | Worker / Storage | `2011 - 2013` | DHCP (`192.168.0.x`) | `10.20.20.21 - 23` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) |
+| **`k3s-cp-s-<rand>`** | Control Plane | `2001 - 2003` | DHCP (`192.168.0.x`) | `10.20.20.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) |
+| **`k3s-wk-s-<rand>`** | Worker / Storage | `2011 - 2013` | DHCP (`192.168.0.x`) | `10.20.20.21 - 23` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) |
 
 ### PROD Environment
 
 | Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 30 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`k3s-cp-<rand>`** | Control Plane | `3001 - 3003` | DHCP (`192.168.0.x`) | `10.30.30.11 - 13` | 4 | 8192 MB | 50 GB | 30 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) |
-| **`k3s-wk-<rand>`** | Worker / Storage | `3011 - 3013` | DHCP (`192.168.0.x`) | `10.30.30.21 - 23` | 8 | 16384 MB | 50 GB | 100 GB | `/mnt/storage-data01` (XFS, Longhorn) |
+| **`k3s-cp-p-<rand>`** | Control Plane | `3001 - 3003` | DHCP (`192.168.0.x`) | `10.30.30.11 - 13` | 4 | 8192 MB | 50 GB | 30 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) |
+| **`k3s-wk-p-<rand>`** | Worker / Storage | `3011 - 3013` | DHCP (`192.168.0.x`) | `10.30.30.21 - 23` | 8 | 16384 MB | 50 GB | 100 GB | `/mnt/storage-data01` (XFS, Longhorn) |
 
 ---
 
@@ -156,7 +156,7 @@ All nodes are labeled at the Kubernetes engine level and organized into Ansible 
 
 ### 6.1. Kubernetes Node Labels
 
-#### Control Plane Nodes (`k3s-cp-<rand>`):
+#### Control Plane Nodes (`k3s-cp-s-<rand>` in Stage / `k3s-cp-p-<rand>` in Prod):
 - `node-role.kubernetes.io/control-plane: "true"`
 - `k3s.io/node-type: management`
 - `monitoring.jnet.lan/enabled: "true"`
@@ -165,7 +165,7 @@ All nodes are labeled at the Kubernetes engine level and organized into Ansible 
 - `topology.kubernetes.io/region: homelab`
 - `topology.kubernetes.io/zone: guardian`
 
-#### Worker Nodes (`k3s-wk-<rand>`):
+#### Worker Nodes (`k3s-wk-s-<rand>` in Stage / `k3s-wk-p-<rand>` in Prod):
 - `node-role.kubernetes.io/worker: "true"`
 - `k3s.io/node-type: compute`
 - `storage.k3s.io/longhorn: "true"`
@@ -189,9 +189,9 @@ All nodes are labeled at the Kubernetes engine level and organized into Ansible 
 When the base VM template (`template_version` / `template_vm_id`) is updated:
 1. **Automation**: Triggered via `make repave ENV=stage` or `bash scripts/rolling_upgrade.sh --mode repave --env stage`.
 2. **Execution Order**:
-   - Worker nodes (`k3s-wk-*`) upgraded sequentially (`serial: 1`).
-   - Secondary control planes (`k3s-cp-*`) upgraded sequentially (`serial: 1`).
-   - Primary control plane (`k3s-cp-*`) upgraded last (`serial: 1`).
+   - Worker nodes (`k3s-wk-s-*` / `k3s-wk-p-*`) upgraded sequentially (`serial: 1`).
+   - Secondary control planes (`k3s-cp-s-*` / `k3s-cp-p-*`) upgraded sequentially (`serial: 1`).
+   - Primary control plane (`k3s-cp-s-*` / `k3s-cp-p-*`) upgraded last (`serial: 1`).
 3. **Safety Checks**: Pre-flight cluster health checks, node cordon/drain, VM replacement, OS re-hardening, K3s rejoin, and etcd quorum health verification before advancing to subsequent nodes.
 
 ---

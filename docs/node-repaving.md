@@ -17,10 +17,10 @@ We provide [`scripts/redeploy_node.sh`](../scripts/redeploy_node.sh) to execute 
 
 ```bash
 # Redeploy a worker node in STAGE (default):
-bash scripts/redeploy_node.sh k3s-wk-g7h8 stage
+bash scripts/redeploy_node.sh k3s-wk-s-g7h8 stage
 
 # Redeploy a control plane node in PROD:
-bash scripts/redeploy_node.sh k3s-cp-a1b2 prod
+bash scripts/redeploy_node.sh k3s-cp-p-a1b2 prod
 ```
 
 ---
@@ -65,6 +65,6 @@ If you manually rebuilt the VM in Proxmox and only need to re-configure and re-j
 
 ```bash
 cd ansible
-ansible-playbook -i ../environments/stage/ansible/hosts.yaml playbooks/redeploy_node.yaml -e "target_node=k3s-wk-g7h8"
+ansible-playbook -i ../environments/stage/ansible/hosts.yaml playbooks/redeploy_node.yaml -e "target_node=k3s-wk-s-g7h8"
 ```
 

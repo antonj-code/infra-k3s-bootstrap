@@ -14,6 +14,7 @@ The repository supports independent lifecycles for **STAGE** and **PROD** cluste
 | :--- | :--- | :--- |
 | **Control Plane VIP** | `192.168.0.41` | `192.168.0.42` |
 | **DNS Endpoint** | `k3s-stage.jnet.lan` / `k3s-test.jnet.lan` | `k3s-prod.jnet.lan` |
+| **Node Naming Pattern**| `k3s-cp-s-<rand>` / `k3s-wk-s-<rand>` | `k3s-cp-p-<rand>` / `k3s-wk-p-<rand>` |
 | **Internal Cluster VLAN**| VLAN `20` (`10.20.20.0/24`) | VLAN `30` (`10.30.30.0/24`) |
 | **VM ID Range (CP)** | `2001 - 2003` | `3001 - 3003` |
 | **VM ID Range (Worker)**| `2011 - 2013` | `3011 - 3013` |

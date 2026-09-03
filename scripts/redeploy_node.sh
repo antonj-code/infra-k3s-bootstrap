@@ -29,7 +29,7 @@ echo "==========================================================================
 # --- Step 1: Identify Resource Target ---
 if [[ "${NODE_NAME}" =~ ^k3s-cp- ]]; then
     NODE_ROLE="control-plane"
-    CP_LIST=$(grep -A 30 "k3s_control_plane:" "${INVENTORY_FILE}" 2>/dev/null | grep -E "^\s+k3s-cp-[a-z0-9]+:" | sed 's/://;s/^[ \t]*//' || echo "")
+    CP_LIST=$(grep -A 30 "k3s_control_plane:" "${INVENTORY_FILE}" 2>/dev/null | grep -E "^\s+k3s-cp-[a-z0-9-]+:" | sed 's/://;s/^[ \t]*//' || echo "")
     INDEX=0
     i=0
     for cp in ${CP_LIST}; do
@@ -42,7 +42,7 @@ if [[ "${NODE_NAME}" =~ ^k3s-cp- ]]; then
     TF_RESOURCE="module.k3s_nodes.proxmox_virtual_environment_vm.k3s_control_plane[${INDEX}]"
 elif [[ "${NODE_NAME}" =~ ^k3s-wk- || "${NODE_NAME}" =~ ^k3s-worker- ]]; then
     NODE_ROLE="worker"
-    WK_LIST=$(grep -A 30 "k3s_workers:" "${INVENTORY_FILE}" 2>/dev/null | grep -E "^\s+k3s-wk-[a-z0-9]+:" | sed 's/://;s/^[ \t]*//' || echo "")
+    WK_LIST=$(grep -A 30 "k3s_workers:" "${INVENTORY_FILE}" 2>/dev/null | grep -E "^\s+k3s-wk-[a-z0-9-]+:" | sed 's/://;s/^[ \t]*//' || echo "")
     INDEX=0
     i=0
     for wk in ${WK_LIST}; do

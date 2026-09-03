@@ -10,9 +10,9 @@ To preserve Kubernetes workload availability and maintain embedded **etcd quorum
 
 ```
 [Phase 1: Workers] ==> [Phase 2: Secondary Control Planes] ==> [Phase 3: Primary Control Plane]
- k3s-wk-AAAA (serial:1)     k3s-cp-YYYY (serial:1)                  k3s-cp-XXXX (serial:1)
- k3s-wk-BBBB (serial:1)     k3s-cp-ZZZZ (serial:1)
- k3s-wk-CCCC (serial:1)
+ k3s-wk-s-AAAA (serial:1)   k3s-cp-s-YYYY (serial:1)                k3s-cp-s-XXXX (serial:1)
+ k3s-wk-s-BBBB (serial:1)   k3s-cp-s-ZZZZ (serial:1)
+ k3s-wk-s-CCCC (serial:1)
 ```
 
 ### Safety Guarantees at Each Step:
