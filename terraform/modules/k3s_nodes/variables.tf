@@ -214,7 +214,7 @@ variable "worker_config" {
 variable "kube_vip_address" {
   description = "Virtual IP for kube-vip Control Plane HA"
   type        = string
-  default     = "192.168.0.41"
+  default     = "192.168.0.43"
 }
 
 variable "kube_vip_hostname" {

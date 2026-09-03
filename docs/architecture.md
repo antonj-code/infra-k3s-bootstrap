@@ -25,7 +25,7 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 |  • k3s-cp-s-YYYY (VM 2002, net1: 10.20.20.12)          • k3s-wk-s-BBBB (VM 2012, net1: 10.20.20.22)|
 |  • k3s-cp-s-ZZZZ (VM 2003, net1: 10.20.20.13)          • k3s-wk-s-CCCC (VM 2013, net1: 10.20.20.23)|
 |                                                                                                   |
-|  VIP: 192.168.0.41 (k3s-stage.jnet.lan) | net0: DHCP (192.168.0.0/24) | net1: VLAN 20 (10.20.20.0/24) |
+|  VIP: 192.168.0.43 (k3s-stage.jnet.lan) | net0: DHCP (192.168.0.0/24) | net1: VLAN 20 (10.20.20.0/24) |
 +---------------------------------------------------------------------------------------------------+
 |  PROD CLUSTER (Proxmox VE Host: colossus.jnet.lan)                                               |
 |                                                                                                   |
@@ -36,7 +36,7 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 |                                                        • k3s-wk-p-DDDD (VM 3014, net1: 10.30.30.24)|
 |                                                        • k3s-wk-p-EEEE (VM 3015, net1: 10.30.30.25)|
 |                                                                                                   |
-|  VIP: 192.168.0.42 (k3s-prod.jnet.lan)  | net0: DHCP (192.168.0.0/24) | net1: VLAN 30 (10.30.30.0/24) |
+|  VIP: 192.168.0.44 (k3s-prod.jnet.lan)  | net0: DHCP (192.168.0.0/24) | net1: VLAN 30 (10.30.30.0/24) |
 +---------------------------------------------------------------------------------------------------+
 ```
 
@@ -67,12 +67,12 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 - **Fault Tolerance**: Quorum requires $\lfloor 3/2 \rfloor + 1 = 2$ healthy nodes. The cluster survives the loss of **1 control plane node** without downtime or degraded write availability.
 
 ### 3.2. kube-vip Control Plane Load Balancing
-- **Stage Virtual IP (VIP)**: `192.168.0.41` (FQDN: `k3s-stage.jnet.lan` / `k3s-test.jnet.lan`).
-- **Prod Virtual IP (VIP)**: `192.168.0.42` (FQDN: `k3s-prod.jnet.lan`).
+- **Stage Virtual IP (VIP)**: `192.168.0.43` (FQDN: `k3s-stage.jnet.lan` / `k3s-test.jnet.lan`).
+- **Prod Virtual IP (VIP)**: `192.168.0.44` (FQDN: `k3s-prod.jnet.lan`).
 - **Operation**: Managed by **kube-vip** running as a static pod / DaemonSet with leader election across the control plane nodes.
 - **Failover**: If the current leader control plane node fails, kube-vip automatically re-assigns the VIP to a surviving control plane node via Gratuitous ARP within seconds.
 - **TLS Subject Alternative Names (SANs)**:
-  - `--tls-san <VIP_ADDRESS>` (`192.168.0.41` or `192.168.0.42`)
+  - `--tls-san <VIP_ADDRESS>` (`192.168.0.43` or `192.168.0.44`)
   - `--tls-san <DOMAIN_NAME>` (`k3s-stage.jnet.lan` or `k3s-prod.jnet.lan`)
   - Dynamic DHCP management IPs and internal VLAN IPs.
 

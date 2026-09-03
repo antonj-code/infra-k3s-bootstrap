@@ -15,9 +15,9 @@ fi
 ACTION="${1:-pull}"
 ENV="${2:-${ENV:-stage}}"
 
-DEFAULT_VIP="192.168.0.41"
+DEFAULT_VIP="192.168.0.43"
 if [[ "${ENV}" == "prod" ]]; then
-    DEFAULT_VIP="192.168.0.42"
+    DEFAULT_VIP="192.168.0.44"
 fi
 
 VAULT_ADDR="${VAULT_ADDR:-https://192.168.0.40:8200}"

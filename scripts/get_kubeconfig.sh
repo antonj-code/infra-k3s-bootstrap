@@ -10,9 +10,9 @@ ENV="${1:-${ENV:-stage}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-DEFAULT_VIP="192.168.0.41"
+DEFAULT_VIP="192.168.0.43"
 if [[ "${ENV}" == "prod" ]]; then
-    DEFAULT_VIP="192.168.0.42"
+    DEFAULT_VIP="192.168.0.44"
 fi
 
 KUBE_VIP_IP="${2:-${DEFAULT_VIP}}"

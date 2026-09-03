@@ -20,7 +20,7 @@
     pve_endpoint: "{{ pve_host_1_endpoint if target_env == 'prod' else pve_host_2_endpoint }}"
     pve_api_token: "{{ pve_host_1_api_token if target_env == 'prod' else pve_host_2_api_token }}"
     pve_node_name: "{{ pve_host_1_node_name if target_env == 'prod' else pve_host_2_node_name }}"
-    default_vip: "{{ '192.168.0.42' if target_env == 'prod' else '192.168.0.41' }}"
+    default_vip: "{{ '192.168.0.44' if target_env == 'prod' else '192.168.0.43' }}"
     default_hostname: "{{ 'k3s-prod.jnet.lan' if target_env == 'prod' else 'k3s-stage.jnet.lan' }}"
 
   tasks:

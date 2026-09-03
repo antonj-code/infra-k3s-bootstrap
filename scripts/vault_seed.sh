@@ -36,10 +36,10 @@ export VAULT_ADDR
 export VAULT_SKIP_VERIFY="${VAULT_SKIP_VERIFY:-true}"
 export VAULT_TOKEN="${VAULT_TOKEN:-}"
 
-DEFAULT_VIP="192.168.0.41"
+DEFAULT_VIP="192.168.0.43"
 DEFAULT_HOST="k3s-stage.jnet.lan"
 if [[ "${ENV}" == "prod" ]]; then
-    DEFAULT_VIP="192.168.0.42"
+    DEFAULT_VIP="192.168.0.44"
     DEFAULT_HOST="k3s-prod.jnet.lan"
 fi
 

@@ -21,7 +21,7 @@ secret/data/k3s-stage/ (and secret/data/k3s-prod/)
 │   ├── service_cidr           # 10.43.0.0/16
 │   ├── flannel_backend        # host-gw
 │   ├── kube_proxy_mode        # ipvs
-│   ├── kube_vip_address       # 192.168.0.41 (stage) / 192.168.0.42 (prod)
+│   ├── kube_vip_address       # 192.168.0.43 (stage) / 192.168.0.44 (prod)
 │   └── kube_vip_hostname      # k3s-stage.jnet.lan / k3s-prod.jnet.lan
 ├── credentials                # Infrastructure deployment credentials
 │   ├── pve_host_1_endpoint    # https://colossus.jnet.lan:8006/
@@ -113,7 +113,7 @@ vault kv put -mount=secret k3s-stage/bootstrap \
   service_cidr="10.43.0.0/16" \
   flannel_backend="host-gw" \
   kube_proxy_mode="ipvs" \
-  kube_vip_address="192.168.0.41" \
+  kube_vip_address="192.168.0.43" \
   kube_vip_hostname="k3s-stage.jnet.lan"
 
 # 3. Store Stage Credentials (targeting guardian)
@@ -151,7 +151,7 @@ vault kv put -mount=secret k3s-prod/credentials \
 
 When the `ansible:configure` pipeline stage completes:
 1. Ansible extracts `/etc/rancher/k3s/k3s.yaml` from the bootstrap primary control plane node.
-2. It replaces `127.0.0.1` with the kube-vip Virtual IP (`192.168.0.41` for stage, `192.168.0.42` for prod).
+2. It replaces `127.0.0.1` with the kube-vip Virtual IP (`192.168.0.43` for stage, `192.168.0.44` for prod).
 3. If `VAULT_TOKEN` is set, Ansible writes the sanitized `kubeconfig` directly to:
    `secret/data/k3s-<env>/cluster` field `kubeconfig` with `validate_certs: false`.
 

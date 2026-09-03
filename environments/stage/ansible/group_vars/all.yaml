@@ -17,7 +17,7 @@ k3s_selinux: true
 
 # Highly Available Control Plane VIP (kube-vip)
 kube_vip_enabled: true
-kube_vip_address: "192.168.0.41"
+kube_vip_address: "192.168.0.43"
 kube_vip_hostname: "k3s-stage.jnet.lan"
 kube_vip_interface: "{{ ansible_facts['default_ipv4']['interface'] | default(ansible_default_ipv4.interface | default('eth0')) }}"
 kube_vip_version: "v0.8.2"
@@ -31,7 +31,7 @@ k3s_api_endpoint: "https://{{ kube_vip_address }}:{{ k3s_api_port }}"
 
 # TLS SANs for Kubernetes API Server
 k3s_tls_sans:
-  - "192.168.0.41"
+  - "192.168.0.43"
   - "k3s-test.jnet.lan"
   - "k3s-stage.jnet.lan"
   - "k3s.jnet.lan"

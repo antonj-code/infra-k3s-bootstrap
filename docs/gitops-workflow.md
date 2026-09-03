@@ -14,7 +14,7 @@ The infrastructure enforces strict isolation between environments:
 | **Control Plane Nodes** | 3x (`k3s-cp-s-*`, VMs `2001-2003`) | 3x (`k3s-cp-p-*`, VMs `3001-3003`) |
 | **Worker Nodes** | 3x (`k3s-wk-s-*`, VMs `2011-2013`) | 5x (`k3s-wk-p-*`, VMs `3011-3015`) |
 | **Total Cluster Size** | **6 Nodes** | **8 Nodes** |
-| **Control Plane VIP** | `192.168.0.41` (`k3s-stage.jnet.lan`) | `192.168.0.42` (`k3s-prod.jnet.lan`) |
+| **Control Plane VIP** | `192.168.0.43` (`k3s-stage.jnet.lan`) | `192.168.0.44` (`k3s-prod.jnet.lan`) |
 | **Internal Cluster Network**| VLAN `20` (`10.20.20.0/24`) | VLAN `30` (`10.30.30.0/24`) |
 | **Terraform State Backend** | GitLab HTTP (`k3s-stage`) | GitLab HTTP (`k3s-prod`) |
 | **Vault Secrets Path** | `secret/data/k3s-stage/*` | `secret/data/k3s-prod/*` |

@@ -248,7 +248,7 @@
     group: root
     mode: '0755'
 
-- name: Deploy kube-vip HA Virtual IP DaemonSet manifest (192.168.0.41)
+- name: Deploy kube-vip HA Virtual IP DaemonSet manifest ({{ kube_vip_address }})
   ansible.builtin.template:
     src: kube-vip.yaml.j2
     dest: /var/lib/rancher/k3s/server/manifests/kube-vip.yaml

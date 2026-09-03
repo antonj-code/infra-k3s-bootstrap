@@ -139,7 +139,7 @@ variable "worker_config" {
 }
 variable "kube_vip_address" {
   type        = string
-  default     = "192.168.0.42"
+  default     = "192.168.0.44"
 }
 variable "kube_vip_hostname" {
   type        = string
