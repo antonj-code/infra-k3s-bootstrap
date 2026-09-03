@@ -1,0 +1,48 @@
+# ==============================================================================
+# Validation & Linting Pipeline Component
+# Checks Terraform formatting/validation and Ansible syntax
+# ==============================================================================
+
+terraform:validate:stage:
+  stage: validate
+  image:
+    name: hashicorp/terraform:1.8.5
+    entrypoint: [""]
+  before_script:
+    - cd ${CI_PROJECT_DIR}/environments/stage/terraform
+    - terraform init -backend=false
+  script:
+    - terraform validate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_PIPELINE_SOURCE == "web"
+
+terraform:validate:prod:
+  stage: validate
+  image:
+    name: hashicorp/terraform:1.8.5
+    entrypoint: [""]
+  before_script:
+    - cd ${CI_PROJECT_DIR}/environments/prod/terraform
+    - terraform init -backend=false
+  script:
+    - terraform validate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_PIPELINE_SOURCE == "web"
+
+ansible:validate:
+  stage: validate
+  image: alpine/ansible:2.21.0
+  before_script:
+    - cd ${CI_PROJECT_DIR}/ansible
+    - ansible-galaxy collection install -r requirements.yaml || true
+  script:
+    - ansible-playbook -i ../environments/stage/ansible/hosts.yaml --syntax-check playbooks/site.yaml
+    - ansible-playbook -i ../environments/stage/ansible/hosts.yaml --syntax-check playbooks/provision_os.yaml
+    - ansible-playbook -i ../environments/stage/ansible/hosts.yaml --syntax-check playbooks/provision_k3s.yaml
+    - ansible-playbook -i ../environments/stage/ansible/hosts.yaml --syntax-check playbooks/redeploy_node.yaml -e "target_node=k3s-wk-s-g7h8"
+    - ansible-playbook -i ../environments/stage/ansible/hosts.yaml --syntax-check playbooks/rolling_update.yaml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_PIPELINE_SOURCE == "web"

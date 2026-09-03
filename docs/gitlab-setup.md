@@ -112,22 +112,28 @@ The GitLab Runner executing the jobs must have Layer 3 network access to:
 
 ---
 
-## 6. Multi-Environment Pipeline Execution Flow
+## 6. Multi-Environment Child Pipeline Architecture
 
-When a merge request or push to `main` is triggered:
+The pipeline is split into modular downstream child pipelines for complete blast-radius isolation:
+
+```
+.
+├── .gitlab-ci.yml                      # Parent coordinator
+└── .gitlab/
+    └── ci/
+        ├── validate.gitlab-ci.yml      # Linting & syntax validation
+        ├── stage.gitlab-ci.yml         # Independent STAGE deployment
+        └── prod.gitlab-ci.yml          # Independent PROD deployment
+```
+
+### Execution Flow:
 
 1. **Validation Stage (`validate`)**:
-   - `terraform:validate:stage` & `terraform:validate:prod`
-   - `ansible:validate` (checks syntax of all playbooks against stage inventory)
-2. **Stage Pipeline (`*:stage`)**:
-   - `stage:vault:seed` (idempotently seeds stage secrets in Vault)
-   - `stage:terraform:plan` (generates execution plan against `k3s-stage` state)
-   - `stage:terraform:apply` (provisions VMs 2001-2013 on `guardian`)
-   - `stage:ansible:configure` (applies OS hardening & deploys K3s HA cluster with VIP `192.168.0.41`)
-   - `stage:k3s:verify` (validates all 6 stage nodes report `Ready`)
-3. **Prod Pipeline (`*:prod`)**:
-   - `prod:terraform:plan` (manual trigger on `main`)
-   - `prod:terraform:apply` (manual trigger: provisions VMs 3001-3015 on `colossus`)
-   - `prod:ansible:configure` (manual trigger: deploys K3s HA cluster on `colossus` with VIP `192.168.0.42`)
-   - `prod:k3s:verify` (manual trigger: validates all 8 prod nodes report `Ready`)
+   - Runs `terraform:validate:stage`, `terraform:validate:prod`, and `ansible:validate` on all Merge Requests and branch pushes.
+2. **Stage Child Pipeline (`stage:pipeline`)**:
+   - Triggered automatically when files under `environments/stage/**`, `terraform/modules/**`, or `ansible/**` change.
+   - Runs `seed` ➔ `plan` ➔ `apply` ➔ `configure` ➔ `verify` exclusively for STAGE on `guardian` (VMs `2001-2013`).
+3. **Prod Child Pipeline (`prod:pipeline`)**:
+   - Gated by a single manual promotion button (`when: manual`) in the GitLab UI or triggered directly via Web UI (`TARGET_ENV=prod`).
+   - Runs `seed` ➔ `plan` ➔ `apply` ➔ `configure` ➔ `verify` exclusively for PROD on `colossus` (VMs `3001-3015`).
 

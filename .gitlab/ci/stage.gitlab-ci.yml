@@ -1,0 +1,183 @@
+# ==============================================================================
+# STAGE Cluster GitOps Deployment Pipeline
+# Targets: guardian.jnet.lan (VLAN 20, VIP 192.168.0.41, 6 Nodes: 3 CP + 3 WK)
+# ==============================================================================
+
+stages:
+  - seed
+  - plan
+  - apply
+  - configure
+  - verify
+
+variables:
+  ANSIBLE_ROOT: "${CI_PROJECT_DIR}/ansible"
+  ANSIBLE_CONFIG: "${CI_PROJECT_DIR}/ansible/ansible.cfg"
+  ANSIBLE_ROLES_PATH: "${CI_PROJECT_DIR}/ansible/roles"
+  ANSIBLE_FORCE_COLOR: "true"
+
+stage:vault:seed:
+  stage: seed
+  image: hashicorp/vault:1.16.2
+  before_script:
+    - apk add --no-cache bash curl openssl openssh-client jq
+  script:
+    - bash scripts/vault_seed.sh stage
+  rules:
+    - if: $VAULT_TOKEN != null && $VAULT_TOKEN != ""
+      when: on_success
+    - when: manual
+      allow_failure: true
+
+stage:terraform:plan:
+  stage: plan
+  image:
+    name: hashicorp/terraform:1.8.5
+    entrypoint: [""]
+  variables:
+    TF_ROOT: "${CI_PROJECT_DIR}/environments/stage/terraform"
+    TF_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/k3s-stage"
+  before_script:
+    - apk add --no-cache curl jq || true
+    - cd ${TF_ROOT}
+    - |
+      if [ -n "${VAULT_TOKEN}" ] && [ -z "${TF_VAR_ssh_public_keys}" ] && [ -z "${SSH_PUBLIC_KEY}" ]; then
+        VAULT_ADDR="${VAULT_ADDR:-https://192.168.0.40:8200}"
+        SSH_PUBLIC_KEY=$(curl -k -s -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/secret/data/k3s-stage/credentials" | sed 's/.*"ssh_public_key":"\([^"]*\)".*/\1/' || echo "")
+      fi
+      RAW_KEY="${TF_VAR_ssh_public_keys:-${SSH_PUBLIC_KEY:-}}"
+      CLEAN_KEY=$(echo "$RAW_KEY" | sed 's/^[["'\'' ]*//;s/[]"'\'' ]*$//')
+      unset TF_VAR_ssh_public_keys
+      cat << JSON > terraform.auto.tfvars.json
+      {
+        "ssh_public_keys": ["${CLEAN_KEY}"]
+      }
+      JSON
+    - |
+      terraform init \
+        -backend-config="address=${TF_ADDRESS}" \
+        -backend-config="lock_address=${TF_ADDRESS}/lock" \
+        -backend-config="unlock_address=${TF_ADDRESS}/lock" \
+        -backend-config="username=gitlab-ci-token" \
+        -backend-config="password=${CI_JOB_TOKEN}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=DELETE" \
+        -backend-config="retry_wait_min=5" \
+        -backend-config="skip_cert_verification=true"
+  script:
+    - terraform plan -out=tfplan -input=false -lock=false
+  artifacts:
+    name: "plan-stage-${CI_COMMIT_SHA}"
+    paths:
+      - ${CI_PROJECT_DIR}/environments/stage/terraform/tfplan
+      - ${CI_PROJECT_DIR}/environments/stage/terraform/.terraform.lock.hcl
+      - ${CI_PROJECT_DIR}/environments/stage/terraform/terraform.auto.tfvars.json
+    expire_in: 7 days
+
+stage:terraform:apply:
+  stage: apply
+  image:
+    name: hashicorp/terraform:1.8.5
+    entrypoint: [""]
+  variables:
+    TF_ROOT: "${CI_PROJECT_DIR}/environments/stage/terraform"
+    TF_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/k3s-stage"
+  dependencies:
+    - stage:terraform:plan
+  before_script:
+    - apk add --no-cache curl jq || true
+    - cd ${TF_ROOT}
+    - |
+      if [ -n "${VAULT_TOKEN}" ] && [ -z "${TF_VAR_ssh_public_keys}" ] && [ -z "${SSH_PUBLIC_KEY}" ]; then
+        VAULT_ADDR="${VAULT_ADDR:-https://192.168.0.40:8200}"
+        SSH_PUBLIC_KEY=$(curl -k -s -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/secret/data/k3s-stage/credentials" | sed 's/.*"ssh_public_key":"\([^"]*\)".*/\1/' || echo "")
+      fi
+      RAW_KEY="${TF_VAR_ssh_public_keys:-${SSH_PUBLIC_KEY:-}}"
+      CLEAN_KEY=$(echo "$RAW_KEY" | sed 's/^[["'\'' ]*//;s/[]"'\'' ]*$//')
+      unset TF_VAR_ssh_public_keys
+      cat << JSON > terraform.auto.tfvars.json
+      {
+        "ssh_public_keys": ["${CLEAN_KEY}"]
+      }
+      JSON
+    - |
+      terraform init \
+        -backend-config="address=${TF_ADDRESS}" \
+        -backend-config="lock_address=${TF_ADDRESS}/lock" \
+        -backend-config="unlock_address=${TF_ADDRESS}/lock" \
+        -backend-config="username=gitlab-ci-token" \
+        -backend-config="password=${CI_JOB_TOKEN}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=DELETE" \
+        -backend-config="retry_wait_min=5" \
+        -backend-config="skip_cert_verification=true"
+  script:
+    - terraform apply -auto-approve -input=false -lock=false -parallelism=1 || (sleep 10 && terraform apply -auto-approve -input=false -lock=false -parallelism=1)
+  artifacts:
+    name: "inventory-stage-${CI_COMMIT_SHA}"
+    paths:
+      - ${CI_PROJECT_DIR}/environments/stage/ansible/hosts.yaml
+    expire_in: 7 days
+
+stage:ansible:configure:
+  stage: configure
+  image: alpine/ansible:2.21.0
+  cache:
+    key: "k3s-credentials-stage"
+    paths:
+      - credentials/stage/
+  dependencies:
+    - stage:terraform:apply
+  before_script:
+    - apk add --no-cache openssh-client openssl jq curl py3-yaml bash
+    - eval $(ssh-agent -s)
+    - |
+      if [ -n "${VAULT_TOKEN}" ]; then
+        VAULT_ADDR="${VAULT_ADDR:-https://192.168.0.40:8200}"
+        VAULT_SECRET_JSON=$(curl -k -s -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/secret/data/k3s-stage/credentials" | jq -r '.data.data // empty')
+        if [ -n "${VAULT_SECRET_JSON}" ]; then
+          if [ -z "${SSH_PRIVATE_KEY}" ]; then
+            SSH_PRIVATE_KEY=$(echo "${VAULT_SECRET_JSON}" | jq -r '.ssh_private_key // empty')
+          fi
+          export PVE_API_TOKEN="${PVE_API_TOKEN:-$(echo "${VAULT_SECRET_JSON}" | jq -r '.pve_host_2_api_token // .pve_api_token // empty')}"
+          export PVE_ENDPOINT="${PVE_ENDPOINT:-$(echo "${VAULT_SECRET_JSON}" | jq -r '.pve_host_2_endpoint // .pve_endpoint // "https://guardian.jnet.lan:8006/"')}"
+          export PVE_NODE_NAME="${PVE_NODE_NAME:-$(echo "${VAULT_SECRET_JSON}" | jq -r '.pve_host_2_node_name // .pve_node_name // "guardian"')}"
+        fi
+      fi
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+    - cd ${ANSIBLE_ROOT}
+    - ansible-galaxy collection install -r requirements.yaml || true
+    - bash ${CI_PROJECT_DIR}/scripts/discover_node_ips.sh stage
+  script:
+    - ansible-playbook -i ${CI_PROJECT_DIR}/environments/stage/ansible/hosts.yaml playbooks/site.yaml < /dev/null
+    - |
+      mkdir -p ${CI_PROJECT_DIR}/credentials/stage
+      if [ -f "${ANSIBLE_ROOT}/../../credentials/stage/kubeconfig.yaml" ]; then
+        cp -f "${ANSIBLE_ROOT}/../../credentials/stage/kubeconfig.yaml" "${CI_PROJECT_DIR}/credentials/stage/kubeconfig.yaml"
+      fi
+  artifacts:
+    name: "k3s-credentials-stage-${CI_COMMIT_SHA}"
+    paths:
+      - credentials/stage/
+    expire_in: 30 days
+
+stage:k3s:verify:
+  stage: verify
+  image:
+    name: bitnami/kubectl:latest
+    entrypoint: [""]
+  dependencies:
+    - stage:ansible:configure
+  script:
+    - |
+      export KUBECONFIG="${CI_PROJECT_DIR}/credentials/stage/kubeconfig.yaml"
+      kubectl get nodes -o wide
+      READY_NODES=$(kubectl get nodes --no-headers | grep -c " Ready " || true)
+      echo "Total Ready Nodes (Stage): ${READY_NODES}/6"
+      if [ "${READY_NODES}" -lt 6 ]; then
+        echo "ERROR: Expected 6 Ready nodes."
+        exit 1
+      fi
