@@ -111,6 +111,9 @@ prod:terraform:apply:
         -backend-config="unlock_method=DELETE" \
         -backend-config="retry_wait_min=5" \
         -backend-config="skip_cert_verification=true"
+  environment:
+    name: prod
+    url: https://k3s-prod.jnet.lan:6443
   script:
     - terraform apply -auto-approve -input=false -lock=false -parallelism=1 || (sleep 10 && terraform apply -auto-approve -input=false -lock=false -parallelism=1)
   artifacts:
@@ -122,6 +125,9 @@ prod:terraform:apply:
 prod:ansible:configure:
   stage: configure
   image: alpine/ansible:2.21.0
+  environment:
+    name: prod
+    url: https://k3s-prod.jnet.lan:6443
   cache:
     key: "k3s-credentials-prod"
     paths:
