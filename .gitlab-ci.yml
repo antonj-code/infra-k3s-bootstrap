@@ -4,6 +4,7 @@
 
 workflow:
   rules:
+    - if: $CI_COMMIT_TAG
     - if: $CI_PIPELINE_SOURCE == "web"
     - if: $CI_PIPELINE_SOURCE == "manual"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -45,7 +46,7 @@ stages:
   - deploy:prod
 
 # -------------------------------------------------------------------
-# Global Linting & Syntax Checks (MRs & Default Branch)
+# Global Linting & Syntax Checks (MRs, Tags & Default Branch)
 # -------------------------------------------------------------------
 include:
   - local: .gitlab/ci/validate.gitlab-ci.yml
@@ -59,6 +60,8 @@ stage:pipeline:
     include: .gitlab/ci/stage.gitlab-ci.yml
     strategy: depend
   rules:
+    - if: $CI_COMMIT_TAG =~ /^v[0-9]+/ || $CI_COMMIT_TAG =~ /^prod/
+      when: never # Tag release is dedicated to PROD promotion
     - if: $CI_PIPELINE_SOURCE == "web" && ($TARGET_ENV == "prod" || $TARGET_ENV == "PROD")
       when: never
     - if: $CI_PIPELINE_SOURCE == "web"
@@ -67,7 +70,7 @@ stage:pipeline:
       when: on_success
 
 # -------------------------------------------------------------------
-# PROD Child Pipeline (Manual One-Click Promotion Gate)
+# PROD Child Pipeline (Triggered via Promote Tag or Manual Gate)
 # -------------------------------------------------------------------
 prod:pipeline:
   stage: deploy:prod
@@ -75,9 +78,14 @@ prod:pipeline:
     include: .gitlab/ci/prod.gitlab-ci.yml
     strategy: depend
   rules:
+    # 1. Automatic PROD deployment when promoted via Git Tag (e.g. v1.0.0 or prod-release)
+    - if: $CI_COMMIT_TAG =~ /^v[0-9]+/ || $CI_COMMIT_TAG =~ /^prod/
+      when: on_success
+    # 2. Web UI trigger targeting PROD
     - if: $CI_PIPELINE_SOURCE == "web" && ($TARGET_ENV == "stage" || $TARGET_ENV == "STAGE")
       when: never
     - if: $CI_PIPELINE_SOURCE == "web" && ($TARGET_ENV == "prod" || $TARGET_ENV == "PROD" || $TARGET_ENV == "all" || $TARGET_ENV == "ALL")
       when: on_success
+    # 3. One-click manual promotion button in GitLab UI pipeline graph
     - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual

@@ -9,7 +9,7 @@ ENV ?= stage
 TF_DIR := environments/$(ENV)/terraform
 ANSIBLE_DIR := environments/$(ENV)/ansible
 
-.PHONY: help seed seed-force kubeconfig plan apply configure verify rolling-upgrade repave
+.PHONY: help seed seed-force kubeconfig plan apply configure verify rolling-upgrade repave promote
 
 help: ## Show this help menu
 	@echo "infra-k3s-bootstrap Multi-Environment Automation Commands (ENV=$(ENV)):"
@@ -41,3 +41,10 @@ rolling-upgrade: ## Trigger sequential rolling upgrade (e.g. make rolling-upgrad
 
 repave: ## Trigger rolling VM repave (e.g. make repave ENV=stage)
 	@bash scripts/rolling_upgrade.sh --mode repave --env $(ENV)
+
+promote: ## Promote validated code to PROD via Git release tag (e.g. make promote TAG=v1.1.0)
+	@if [ -z "$(TAG)" ]; then echo "ERROR: TAG is required (e.g. make promote TAG=v1.1.0)"; exit 1; fi
+	@echo "[INFO] Creating release tag $(TAG) and promoting to PROD..."
+	@git tag -a $(TAG) -m "Release $(TAG) promoted to PROD"
+	@git push origin $(TAG)
+	@echo "[OK] Tag $(TAG) pushed. PROD GitLab child pipeline triggered!"

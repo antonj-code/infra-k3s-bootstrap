@@ -134,6 +134,8 @@ The pipeline is split into modular downstream child pipelines for complete blast
    - Triggered automatically when files under `environments/stage/**`, `terraform/modules/**`, or `ansible/**` change.
    - Runs `seed` ➔ `plan` ➔ `apply` ➔ `configure` ➔ `verify` exclusively for STAGE on `guardian` (VMs `2001-2013`).
 3. **Prod Child Pipeline (`prod:pipeline`)**:
-   - Gated by a single manual promotion button (`when: manual`) in the GitLab UI or triggered directly via Web UI (`TARGET_ENV=prod`).
+   - **Promotion via Release Tag**: Pushing a version tag (e.g. `make promote TAG=v1.1.0` or `git tag v1.1.0 && git push origin v1.1.0`) automatically triggers the PROD child pipeline without manual clicking.
+   - **Promotion via GitLab UI**: A one-click manual promotion button (`when: manual`) is always available in the pipeline graph on `main`.
+   - **Promotion via Web Run**: Trigger directly by setting `TARGET_ENV=PROD` on the *Run Pipeline* page.
    - Runs `seed` ➔ `plan` ➔ `apply` ➔ `configure` ➔ `verify` exclusively for PROD on `colossus` (VMs `3001-3015`).
 
