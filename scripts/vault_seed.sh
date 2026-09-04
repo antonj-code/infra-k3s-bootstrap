@@ -59,17 +59,6 @@ echo "[INFO] HashiCorp Vault Seeding (Environment: ${ENV})"
 echo "       Vault Address: ${VAULT_ADDR}"
 echo "================================================================================"
 
-if [[ ! -f "${SSH_KEY_PATH}" ]]; then
-    echo "[STEP 1] Generating SSH key: ${SSH_KEY_PATH}..."
-    mkdir -p "$(dirname "${SSH_KEY_PATH}")"
-    ssh-keygen -t ed25519 -f "${SSH_KEY_PATH}" -N "" -C "gitlab-runner-k3s-${ENV}@gitbox.jnet.lan"
-else
-    echo "[STEP 1] Found existing SSH deployment key: ${SSH_KEY_PATH}"
-fi
-
-SSH_PUB_KEY=$(cat "${SSH_KEY_PATH}.pub")
-SSH_PRIV_KEY=$(cat "${SSH_KEY_PATH}")
-
 if [[ -z "${VAULT_TOKEN}" ]]; then
     if vault token lookup >/dev/null 2>&1; then
         VAULT_TOKEN=$(vault print token 2>/dev/null || echo '')
@@ -81,6 +70,42 @@ if [[ -z "${VAULT_TOKEN}" ]]; then
     exit 1
 fi
 export VAULT_TOKEN
+
+# ------------------------------------------------------------------------------
+# Check for existing secrets in Vault (preserve unless FORCE is true)
+# ------------------------------------------------------------------------------
+EXISTING_CREDS=$(curl -k -s -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/secret/data/k3s-${ENV}/credentials" | jq -r '.data.data // empty' 2>/dev/null || echo "")
+EXISTING_BOOTSTRAP=$(curl -k -s -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/secret/data/k3s-${ENV}/bootstrap" | jq -r '.data.data // empty' 2>/dev/null || echo "")
+
+EXISTING_PUB_KEY=""
+EXISTING_PRIV_KEY=""
+if [[ -n "${EXISTING_CREDS}" ]]; then
+    EXISTING_PUB_KEY=$(echo "${EXISTING_CREDS}" | jq -r '.ssh_public_key // empty')
+    EXISTING_PRIV_KEY=$(echo "${EXISTING_CREDS}" | jq -r '.ssh_private_key // empty')
+fi
+
+if [[ "${FORCE}" != "true" && -n "${EXISTING_PUB_KEY}" && -n "${EXISTING_PRIV_KEY}" ]]; then
+    echo "[STEP 1] Preserving existing SSH keypair from Vault for k3s-${ENV}..."
+    SSH_PUB_KEY="${EXISTING_PUB_KEY}"
+    SSH_PRIV_KEY="${EXISTING_PRIV_KEY}"
+    # Persist locally if needed
+    mkdir -p "$(dirname "${SSH_KEY_PATH}")"
+    echo "${SSH_PRIV_KEY}" > "${SSH_KEY_PATH}"
+    chmod 600 "${SSH_KEY_PATH}"
+    echo "${SSH_PUB_KEY}" > "${SSH_KEY_PATH}.pub"
+    chmod 644 "${SSH_KEY_PATH}.pub"
+elif [[ -f "${SSH_KEY_PATH}" && "${FORCE}" != "true" ]]; then
+    echo "[STEP 1] Found existing local SSH deployment key: ${SSH_KEY_PATH}"
+    SSH_PUB_KEY=$(cat "${SSH_KEY_PATH}.pub")
+    SSH_PRIV_KEY=$(cat "${SSH_KEY_PATH}")
+else
+    echo "[STEP 1] Generating new SSH key: ${SSH_KEY_PATH}..."
+    mkdir -p "$(dirname "${SSH_KEY_PATH}")"
+    rm -f "${SSH_KEY_PATH}" "${SSH_KEY_PATH}.pub"
+    ssh-keygen -t ed25519 -f "${SSH_KEY_PATH}" -N "" -C "gitlab-runner-k3s-${ENV}@gitbox.jnet.lan"
+    SSH_PUB_KEY=$(cat "${SSH_KEY_PATH}.pub")
+    SSH_PRIV_KEY=$(cat "${SSH_KEY_PATH}")
+fi
 
 vault_write_secret() {
     local subpath="$1"
@@ -96,7 +121,20 @@ vault_write_secret() {
 }
 
 echo "[INFO] Seeding secrets for k3s-${ENV}..."
-K3S_TOKEN="k3s-$(openssl rand -hex 24)"
+
+# Preserve existing bootstrap token if present unless FORCE=true
+EXISTING_TOKEN=""
+if [[ "${FORCE}" != "true" && -n "${EXISTING_BOOTSTRAP}" ]]; then
+    EXISTING_TOKEN=$(echo "${EXISTING_BOOTSTRAP}" | jq -r '.token // empty')
+fi
+
+if [[ -n "${EXISTING_TOKEN}" ]]; then
+    echo "[INFO] Preserving existing cluster bootstrap token from Vault..."
+    K3S_TOKEN="${EXISTING_TOKEN}"
+else
+    K3S_TOKEN="k3s-$(openssl rand -hex 24)"
+fi
+
 BOOTSTRAP_PAYLOAD=$(jq -n \
     --arg tok "${K3S_TOKEN}" \
     --arg ccidr "10.42.0.0/16" \

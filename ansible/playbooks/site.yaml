@@ -13,10 +13,19 @@
   gather_facts: false
   any_errors_fatal: true
   tasks:
+    - name: Wait for port 22 to be open
+      ansible.builtin.wait_for:
+        port: 22
+        host: "{{ ansible_host | default(inventory_hostname) }}"
+        search_regex: OpenSSH
+        delay: 5
+        timeout: 180
+      delegate_to: localhost
+
     - name: Wait for SSH connectivity
       ansible.builtin.wait_for_connection:
-        delay: 3
-        timeout: 90
+        delay: 5
+        timeout: 180
 
 # --- Step 1: Base System Tuning, Sysctl, Swap, and Kernel Modules ---
 # k3s_common no longer reboots nodes (see its tasks/main.yaml), so there's
