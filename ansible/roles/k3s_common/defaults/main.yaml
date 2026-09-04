@@ -91,6 +91,7 @@ k3s_worker_firewall_ports:
 # Trusted subnets for cluster internal traffic
 k3s_trusted_subnets:
   - "192.168.0.0/24"  # Physical node LAN (net0, external/management)
-  - "10.20.20.0/24"   # Internal cluster network (net1, VLAN 20 - etcd/kubelet/flannel)
+  - "10.20.20.0/24"   # Internal cluster network Stage (net1, VLAN 20 - etcd/kubelet/flannel)
+  - "10.30.30.0/24"   # Internal cluster network Prod (net1, VLAN 30 - etcd/kubelet/flannel)
   - "10.42.0.0/16"    # K3s Pod CIDR
   - "10.43.0.0/16"    # K3s Service CIDR

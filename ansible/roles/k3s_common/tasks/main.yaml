@@ -215,7 +215,7 @@
   loop: "{{ k3s_trusted_subnets }}"
   when: ansible_facts['os_family'] == 'RedHat'
 
-- name: Add CNI interfaces to trusted zone
+- name: Add CNI and internal cluster network interfaces to trusted zone
   ansible.posix.firewalld:
     zone: trusted
     interface: "{{ item }}"
@@ -225,8 +225,12 @@
   loop:
     - "cni0"
     - "flannel.1"
+    - "{{ k3s_internal_interface }}"
   failed_when: false
-  when: ansible_facts['os_family'] == 'RedHat'
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - item is defined
+    - item != ""
 
 - name: Open K3s Control Plane firewall ports in default zone
   ansible.posix.firewalld:
