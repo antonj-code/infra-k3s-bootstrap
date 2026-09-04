@@ -9,6 +9,7 @@ stages:
   - apply
   - configure
   - verify
+  - gitops
   - recover
 
 variables:
@@ -213,6 +214,27 @@ prod:k3s:verify:
         echo "ERROR: Expected 8 Ready nodes (3 Control Plane + 5 Workers)."
         exit 1
       fi
+  rules:
+    - if: $PIPELINE_ACTION == "recover-node"
+      when: never
+    - when: on_success
+
+# -------------------------------------------------------------------
+# PROD: Flux CD GitOps Bootstrapper
+# -------------------------------------------------------------------
+prod:flux:bootstrap:
+  stage: gitops
+  image: alpine/ansible:2.21.0
+  environment:
+    name: prod
+    url: https://k3s-prod.jnet.lan:6443
+  dependencies:
+    - prod:ansible:configure
+    - prod:k3s:verify
+  before_script:
+    - apk add --no-cache curl jq bash openssl openssh-client git
+  script:
+    - bash ${CI_PROJECT_DIR}/scripts/bootstrap_flux.sh prod
   rules:
     - if: $PIPELINE_ACTION == "recover-node"
       when: never
