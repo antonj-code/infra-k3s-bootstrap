@@ -1,0 +1,69 @@
+---
+# ==============================================================================
+# Resolve the K3s Cluster Join Token from HashiCorp Vault
+# ==============================================================================
+# The K3s server token is effectively the cluster's root credential: anyone
+# holding it plus reachability to :6443 can join a server node and read every
+# secret in the cluster. It therefore must not live in group_vars, which is
+# committed to git.
+#
+# vault_seed.sh (and playbooks/seed_vault.yaml) generate a random token into
+# secret/data/k3s-<env>/bootstrap field 'token'. Until now nothing read it back
+# and the effective token was a static literal in group_vars/all.yaml - this
+# closes that gap by making the seeded value the one the cluster actually uses.
+#
+# Resolved per host (delegated to the controller) rather than once per play:
+# every call returns the same stored value, so consistency is guaranteed, and
+# it avoids depending on run_once fact propagation across plays with serial.
+
+- name: Resolve K3s cluster token from Vault
+  when: k3s_token is not defined or (k3s_token | default('') | length) == 0
+  delegate_to: localhost
+  become: false
+  block:
+    - name: Read K3s bootstrap secret from Vault
+      ansible.builtin.uri:
+        url: >-
+          {{ lookup('env', 'VAULT_ADDR') | default('https://192.168.0.40:8200', true) }}/v1/{{
+          vault_bootstrap_secret_path | default('secret/data/k3s-' + (cluster_environment | default('stage')) + '/bootstrap') }}
+        method: GET
+        headers:
+          X-Vault-Token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+        validate_certs: false # Self-signed TLS on Vault load balancer (192.168.0.40:8200)
+        status_code: [200, 400, 403, 404, 503]
+      register: k3s_vault_bootstrap
+      # The response body carries the token, so it must never reach the log.
+      # Status code and URL are surfaced separately in the assert below, which
+      # keeps this debuggable without printing the secret.
+      no_log: true
+      failed_when: false
+
+    - name: Report Vault bootstrap secret lookup result
+      ansible.builtin.debug:
+        msg: >-
+          Vault lookup of
+          {{ vault_bootstrap_secret_path | default('secret/data/k3s-' + (cluster_environment | default('stage')) + '/bootstrap') }}
+          returned HTTP {{ k3s_vault_bootstrap.status | default('no response') }}
+
+    - name: Set K3s cluster token from Vault bootstrap secret
+      ansible.builtin.set_fact:
+        k3s_token: "{{ k3s_vault_bootstrap.json.data.data.token | default('') }}"
+      no_log: true
+      when: (k3s_vault_bootstrap.status | default(0)) == 200
+
+# Fail here, loudly and early, rather than templating an empty token into
+# config.yaml - an empty token makes k3s mint its own on the first server and
+# leaves every other node unable to join, which surfaces much later as a
+# confusing "node never became Ready".
+- name: Assert a usable K3s cluster token was resolved
+  ansible.builtin.assert:
+    that:
+      - k3s_token is defined
+      - (k3s_token | default('') | length) >= 16
+    fail_msg: >-
+      No usable K3s cluster token could be resolved from
+      {{ vault_bootstrap_secret_path | default('secret/data/k3s-' + (cluster_environment | default('stage')) + '/bootstrap') }}
+      (HTTP {{ k3s_vault_bootstrap.status | default('not attempted') }}).
+      Seed it first with 'make seed ENV={{ cluster_environment | default('stage') }}'
+      and make sure VAULT_TOKEN is exported for this run.
+    success_msg: "K3s cluster token resolved from Vault."

@@ -2,7 +2,9 @@
 # Global K3s Cluster Configuration (STAGE)
 k3s_version: "v1.30.4+k3s1"
 k3s_template_version: "1.0.0"
-k3s_token: "k3s-cluster-token-secret-jnet-labs-guardian-stage"
+# k3s_token is deliberately NOT set here - it is the cluster's root credential
+# and is resolved at run time from secret/data/k3s-stage/bootstrap by the
+# k3s_vault_token role. Seed it with: make seed ENV=stage
 
 # Network & Pod Subnets
 k3s_cluster_cidr: "10.42.0.0/16"

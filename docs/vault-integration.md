@@ -107,8 +107,10 @@ path "secret/metadata/k3s-prod/*" {
 EOF
 
 # 2. Store K3s Stage Bootstrap Token & Network Config
+# NOTE: the token is the cluster's root credential - generate it, never type a
+# memorable literal, and never commit it. `make seed ENV=stage` does this for you.
 vault kv put -mount=secret k3s-stage/bootstrap \
-  token="k3s-cluster-token-secret-jnet-labs-guardian-stage" \
+  token="k3s-$(openssl rand -hex 24)" \
   cluster_cidr="10.42.0.0/16" \
   service_cidr="10.43.0.0/16" \
   flannel_backend="host-gw" \

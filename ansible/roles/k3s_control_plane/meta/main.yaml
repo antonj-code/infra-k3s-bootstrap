@@ -1,0 +1,5 @@
+---
+# The cluster join token is resolved from Vault before this role templates it
+# into /etc/rancher/k3s/config.yaml.
+dependencies:
+  - role: k3s_vault_token
