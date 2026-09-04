@@ -15,10 +15,8 @@
   tasks:
     - name: Wait for SSH connectivity
       ansible.builtin.wait_for_connection:
-        delay: 5
-        timeout: 300
-        connect_timeout: 10
-        sleep: 5
+        delay: 3
+        timeout: 90
 
 # --- Step 1: Base System Tuning, Sysctl, Swap, and Kernel Modules ---
 # k3s_common no longer reboots nodes (see its tasks/main.yaml), so there's
