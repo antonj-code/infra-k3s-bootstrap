@@ -13,6 +13,7 @@ k3s_common_packages_redhat:
   - firewalld
   - iptables
   - ipset
+  - ipvsadm # kube_proxy_mode is ipvs - without this there is no way to inspect it
   - iproute
   - socat
   - conntrack-tools
@@ -66,6 +67,16 @@ k3s_sysctl_settings:
   - { name: 'fs.inotify.max_user_watches', value: '524288' }
   - { name: 'fs.inotify.max_user_instances', value: '8192' }
   - { name: 'net.core.somaxconn', value: '4096' }
+
+# Verified against the live kernel after the sysctl file is written. These are
+# the parameters whose absence breaks pod networking silently rather than
+# producing an obvious error - a node with ip_forward=0 still joins, still
+# reports Ready, and still passes a node-count check, while dropping every
+# packet destined for a pod on another node.
+k3s_sysctl_required_runtime:
+  - net.ipv4.ip_forward
+  - net.ipv4.conf.all.forwarding
+  - net.bridge.bridge-nf-call-iptables
 
 
 # Firewall ports for Control Plane

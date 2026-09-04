@@ -136,15 +136,63 @@
   failed_when: false
 
 # --- Step 4: Sysctl Parameters Tuning ---
+# The AlmaLinux 9 CIS template ships its own sysctl drop-ins - notably
+# /etc/sysctl.d/net_ipv4_ip_forward.conf, which sets net.ipv4.ip_forward = 0
+# because CIS requires that on hosts that aren't routers.
+#
+# sysctl.d files are applied in lexicographic order by FILENAME across every
+# directory, and the lexicographically last name wins. 'n' sorts after '9', so
+# net_ipv4_ip_forward.conf beat the 99-kubernetes.conf this role used to write -
+# the usual "higher number = higher priority" instinct does not hold against a
+# name that starts with a letter. Worse, this task's own reload runs
+# `sysctl --system`, which re-applied the CIS 0 immediately after setting 1.
+#
+# The result: ip_forward stayed 0 on every node. Pods could still reach the LAN
+# (that path is masqueraded out of the node) but nothing could be forwarded INTO
+# a pod veth, so cross-node pod traffic - including every query to CoreDNS - was
+# silently dropped. Nodes still reported Ready, so verify passed 6/6.
+#
+# A zz- prefix sorts after the CIS net_* drop-ins and wins.
+- name: Remove superseded sysctl drop-in written by earlier runs of this role
+  ansible.builtin.file:
+    path: /etc/sysctl.d/99-kubernetes.conf
+    state: absent
+
 - name: Apply sysctl optimizations for Kubernetes networking and performance
   ansible.posix.sysctl:
     name: "{{ item.name }}"
     value: "{{ item.value }}"
-    sysctl_file: /etc/sysctl.d/99-kubernetes.conf
+    sysctl_file: /etc/sysctl.d/zz-k3s-kubernetes.conf
     state: present
     reload: true
   loop: "{{ k3s_sysctl_settings }}"
   notify: Reload sysctl
+
+# Writing a sysctl file is not evidence that the value took effect. Read the
+# critical ones back from the live kernel and fail here if they didn't - the
+# override above survived a full cluster rebuild and a passing 6/6 readiness
+# check precisely because nothing ever verified the runtime value.
+- name: Read back kernel parameters that cluster networking depends on
+  ansible.builtin.command:
+    cmd: "sysctl -n {{ item }}"
+  loop: "{{ k3s_sysctl_required_runtime }}"
+  register: k3s_sysctl_runtime
+  changed_when: false
+
+- name: Assert required kernel networking parameters are actually active
+  ansible.builtin.assert:
+    that:
+      - (item.stdout | trim) == '1'
+    fail_msg: >-
+      {{ item.item }} is '{{ item.stdout | trim }}' at runtime, expected '1'.
+      Something is overriding /etc/sysctl.d/zz-k3s-kubernetes.conf - find the
+      winning drop-in with:
+      grep -rn '{{ item.item }}' /etc/sysctl.conf /etc/sysctl.d/ /usr/lib/sysctl.d/
+      (files are applied in lexicographic order by filename; the last name wins).
+    success_msg: "{{ item.item }} = 1"
+  loop: "{{ k3s_sysctl_runtime.results }}"
+  loop_control:
+    label: "{{ item.item }}"
 
 # --- Step 5: SELinux Configuration for K3s ---
 - name: Install container-selinux and K3s SELinux policy RPM on RedHat / AlmaLinux
