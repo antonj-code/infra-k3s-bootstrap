@@ -84,6 +84,24 @@ if [[ -n "${EXISTING_CREDS}" ]]; then
     EXISTING_PRIV_KEY=$(echo "${EXISTING_CREDS}" | jq -r '.ssh_private_key // empty')
 fi
 
+# The credentials payload below is written unconditionally, so any field that is
+# only sourced from the environment gets blanked whenever this runs without that
+# variable set - which is the normal case in CI, where only VAULT_TOKEN is
+# guaranteed. Carry the stored values forward the same way the SSH keypair and
+# the bootstrap token already are, so re-seeding is non-destructive.
+if [[ -n "${EXISTING_CREDS}" && "${FORCE}" != "true" ]]; then
+    PVE_HOST_1_API_TOKEN="${PVE_HOST_1_API_TOKEN:-$(echo "${EXISTING_CREDS}" | jq -r '.pve_host_1_api_token // empty')}"
+    PVE_HOST_2_API_TOKEN="${PVE_HOST_2_API_TOKEN:-$(echo "${EXISTING_CREDS}" | jq -r '.pve_host_2_api_token // empty')}"
+    GITLAB_TOKEN="${GITLAB_TOKEN:-$(echo "${EXISTING_CREDS}" | jq -r '.gitlab_token // empty')}"
+fi
+GITLAB_TOKEN="${GITLAB_TOKEN:-}"
+
+if [[ -z "${GITLAB_TOKEN}" ]]; then
+    echo "[WARN] No gitlab_token available (not in Vault, not in the environment)."
+    echo "       Flux CD bootstrap will fail until you seed one:"
+    echo "         GITLAB_TOKEN=<personal-or-group-access-token> bash scripts/vault_seed.sh ${ENV}"
+fi
+
 if [[ "${FORCE}" != "true" && -n "${EXISTING_PUB_KEY}" && -n "${EXISTING_PRIV_KEY}" ]]; then
     echo "[STEP 1] Preserving existing SSH keypair from Vault for k3s-${ENV}..."
     SSH_PUB_KEY="${EXISTING_PUB_KEY}"
@@ -159,6 +177,7 @@ CREDS_PAYLOAD=$(jq -n \
     --arg target_node "$([ "${ENV}" == "prod" ] && echo "${PVE_HOST_1_NODE_NAME}" || echo "${PVE_HOST_2_NODE_NAME}")" \
     --arg pub "${SSH_PUB_KEY}" \
     --arg priv "${SSH_PRIV_KEY}" \
+    --arg gltok "${GITLAB_TOKEN}" \
     '{
         pve_host_1_endpoint: $h1_ep,
         pve_host_1_api_token: $h1_tok,
@@ -170,7 +189,8 @@ CREDS_PAYLOAD=$(jq -n \
         pve_api_token: $target_tok,
         pve_node_name: $target_node,
         ssh_public_key: $pub,
-        ssh_private_key: $priv
+        ssh_private_key: $priv,
+        gitlab_token: $gltok
     }')
 
 vault_write_secret "k3s-${ENV}/credentials" "${CREDS_PAYLOAD}"
