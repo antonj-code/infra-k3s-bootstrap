@@ -34,7 +34,12 @@ terraform:validate:prod:
 ansible:validate:
   stage: validate
   image: alpine/ansible:2.21.0
+  variables:
+    ANSIBLE_CONFIG: "${CI_PROJECT_DIR}/ansible/ansible.cfg"
+    ANSIBLE_ROLES_PATH: "${CI_PROJECT_DIR}/ansible/roles"
+    ANSIBLE_FORCE_COLOR: "true"
   before_script:
+    - chmod 755 ${CI_PROJECT_DIR}/ansible
     - cd ${CI_PROJECT_DIR}/ansible
     - ansible-galaxy collection install -r requirements.yaml || true
   script:

@@ -165,6 +165,7 @@ stage:ansible:configure:
     - mkdir -p ~/.ssh
     - chmod 700 ~/.ssh
     - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+    - chmod 755 ${CI_PROJECT_DIR}/ansible
     - cd ${ANSIBLE_ROOT}
     - ansible-galaxy collection install -r requirements.yaml || true
     - bash ${CI_PROJECT_DIR}/scripts/discover_node_ips.sh stage
