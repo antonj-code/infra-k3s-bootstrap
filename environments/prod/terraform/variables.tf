@@ -95,7 +95,7 @@ variable "control_plane_count" {
 }
 variable "worker_count" {
   type        = number
-  default     = 3
+  default     = 5
 }
 variable "control_plane_vmid_start" {
   type        = number
