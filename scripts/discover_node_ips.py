@@ -50,13 +50,43 @@ VAULT_TOKEN = os.environ.get("VAULT_TOKEN", "")
 SUBNET_PREFIX = os.environ.get("SUBNET_PREFIX", "192.168.0")
 SSH_USER = os.environ.get("ANSIBLE_USER", "almalinux")
 if ENV == "prod":
-    PVE_ENDPOINT = os.environ.get("PVE_HOST_1_ENDPOINT", os.environ.get("PVE_ENDPOINT", "https://colossus.jnet.lan:8006/")).rstrip("/")
-    PVE_API_TOKEN = os.environ.get("PVE_HOST_1_API_TOKEN", os.environ.get("PVE_API_TOKEN", ""))
-    PVE_NODE = os.environ.get("PVE_HOST_1_NODE_NAME", os.environ.get("PVE_NODE_NAME", "colossus"))
+    PVE_ENDPOINT = (
+        os.environ.get("TF_VAR_pve_host_1_endpoint") or
+        os.environ.get("PVE_HOST_1_ENDPOINT") or
+        os.environ.get("PVE_ENDPOINT") or
+        "https://colossus.jnet.lan:8006/"
+    ).rstrip("/")
+    PVE_API_TOKEN = (
+        os.environ.get("TF_VAR_pve_host_1_api_token") or
+        os.environ.get("PVE_HOST_1_API_TOKEN") or
+        os.environ.get("PVE_API_TOKEN") or
+        ""
+    )
+    PVE_NODE = (
+        os.environ.get("TF_VAR_pve_host_1_node_name") or
+        os.environ.get("PVE_HOST_1_NODE_NAME") or
+        os.environ.get("PVE_NODE_NAME") or
+        "colossus"
+    )
 else:
-    PVE_ENDPOINT = os.environ.get("PVE_HOST_2_ENDPOINT", os.environ.get("PVE_ENDPOINT", "https://guardian.jnet.lan:8006/")).rstrip("/")
-    PVE_API_TOKEN = os.environ.get("PVE_HOST_2_API_TOKEN", os.environ.get("PVE_API_TOKEN", ""))
-    PVE_NODE = os.environ.get("PVE_HOST_2_NODE_NAME", os.environ.get("PVE_NODE_NAME", "guardian"))
+    PVE_ENDPOINT = (
+        os.environ.get("TF_VAR_pve_host_2_endpoint") or
+        os.environ.get("PVE_HOST_2_ENDPOINT") or
+        os.environ.get("PVE_ENDPOINT") or
+        "https://guardian.jnet.lan:8006/"
+    ).rstrip("/")
+    PVE_API_TOKEN = (
+        os.environ.get("TF_VAR_pve_host_2_api_token") or
+        os.environ.get("PVE_HOST_2_API_TOKEN") or
+        os.environ.get("PVE_API_TOKEN") or
+        ""
+    )
+    PVE_NODE = (
+        os.environ.get("TF_VAR_pve_host_2_node_name") or
+        os.environ.get("PVE_HOST_2_NODE_NAME") or
+        os.environ.get("PVE_NODE_NAME") or
+        "guardian"
+    )
 
 # Load credentials from Vault if available
 if VAULT_TOKEN and not PVE_API_TOKEN:
@@ -107,9 +137,10 @@ def query_pve_agent_ips():
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         
+        auth_header = f"PVEAPIToken={PVE_API_TOKEN}" if not PVE_API_TOKEN.startswith("PVEAPIToken=") else PVE_API_TOKEN
         req = urllib.request.Request(
             f"{PVE_ENDPOINT}/api2/json/nodes/{PVE_NODE}/qemu",
-            headers={"Authorization": f"PVEAPIToken={PVE_API_TOKEN}"}
+            headers={"Authorization": auth_header}
         )
         with urllib.request.urlopen(req, timeout=5, context=ctx) as response:
             vms = json.loads(response.read().decode()).get("data", [])
@@ -124,7 +155,7 @@ def query_pve_agent_ips():
             try:
                 agent_req = urllib.request.Request(
                     f"{PVE_ENDPOINT}/api2/json/nodes/{PVE_NODE}/qemu/{vmid}/agent/network-get-interfaces",
-                    headers={"Authorization": f"PVEAPIToken={PVE_API_TOKEN}"}
+                    headers={"Authorization": auth_header}
                 )
                 with urllib.request.urlopen(agent_req, timeout=4, context=ctx) as agent_res:
                     ifaces = json.loads(agent_res.read().decode()).get("data", {}).get("result", [])
@@ -142,15 +173,18 @@ def query_pve_agent_ips():
 
 def check_port_22(ip):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(0.3)
-    result = sock.connect_ex((ip, 22))
-    sock.close()
-    return ip if result == 0 else None
+    sock.settimeout(0.8)
+    try:
+        result = sock.connect_ex((ip, 22))
+        sock.close()
+        return ip if result == 0 else None
+    except Exception:
+        return None
 
 def scan_live_ips():
     ips = [f"{SUBNET_PREFIX}.{i}" for i in range(2, 255)]
     live = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=60) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
         results = executor.map(check_port_22, ips)
         for r in results:
             if r:
@@ -160,12 +194,12 @@ def scan_live_ips():
 def ssh_identify_node(ip):
     try:
         res = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=2",
+            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=3",
              "-o", "BatchMode=yes", f"{SSH_USER}@{ip}", "hostname"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=3
+            timeout=4
         )
         if res.returncode == 0:
             hostname = res.stdout.strip()
@@ -177,7 +211,7 @@ def ssh_identify_node(ip):
 
 def update_inventory_and_hosts(discovered_nodes):
     if not discovered_nodes:
-        print("[WARN] No nodes discovered.")
+        print("[WARN] No nodes discovered to write.")
         return
 
     print(f"\n[INFO] Updating inventory: {INVENTORY_FILE}")
@@ -199,19 +233,21 @@ def update_inventory_and_hosts(discovered_nodes):
     with open(INVENTORY_FILE, "w") as f:
         yaml.dump(doc, f, default_flow_style=False, sort_keys=False)
 
-    # Optional /etc/hosts update
+    # Populate /etc/hosts in runner container for absolute hostname resolution
     try:
-        hosts_entries = [f"{ip} {name}\n" for name, ip in discovered_nodes.items()]
         if os.path.exists("/etc/hosts") and os.access("/etc/hosts", os.W_OK):
             with open("/etc/hosts", "r") as f:
                 content = f.read()
+            additions = []
             for name, ip in discovered_nodes.items():
-                if name not in content:
-                    content += f"{ip} {name}\n"
-            with open("/etc/hosts", "w") as f:
-                f.write(content)
-    except Exception:
-        pass
+                if f" {name}" not in content:
+                    additions.append(f"{ip} {name}\n")
+            if additions:
+                with open("/etc/hosts", "a") as f:
+                    f.writelines(additions)
+                print(f"[INFO] Added {len(additions)} node entries to /etc/hosts.")
+    except Exception as e:
+        print(f"[DEBUG] /etc/hosts update notice: {e}")
 
 def main():
     print(f"[INFO] Discovering node IPs for environment: {ENV}")
@@ -221,19 +257,36 @@ def main():
         return
 
     print(f"[INFO] Expected nodes ({len(expected)}): {list(expected.keys())}")
-    discovered = query_pve_agent_ips()
+    discovered = {}
     
-    missing = [h for h in expected if h not in discovered]
-    if missing:
-        print(f"[INFO] Proxmox agent returned {len(discovered)} nodes. Scanning subnet for remaining {len(missing)} nodes...")
-        live_ips = scan_live_ips()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-            results = executor.map(ssh_identify_node, live_ips)
-            for name, ip in results:
-                if name and name in expected:
-                    discovered[name] = ip
+    # Retry polling loop up to 6 iterations (60 seconds)
+    max_attempts = 6
+    for attempt in range(1, max_attempts + 1):
+        # 1. Proxmox Agent query
+        pve_found = query_pve_agent_ips()
+        for k, v in pve_found.items():
+            if k in expected:
+                discovered[k] = v
 
-    print(f"[INFO] Discovered {len(discovered)} of {len(expected)} expected nodes.")
+        # 2. Subnet SSH challenge for remaining
+        missing = [h for h in expected if h not in discovered]
+        if missing:
+            print(f"[INFO] (Attempt {attempt}/{max_attempts}) Found {len(discovered)}/{len(expected)}. Scanning subnet for remaining {len(missing)} nodes...")
+            live_ips = scan_live_ips()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+                results = executor.map(ssh_identify_node, live_ips)
+                for name, ip in results:
+                    if name and name in expected:
+                        discovered[name] = ip
+
+        if len(discovered) >= len(expected):
+            print(f"[INFO] Successfully discovered all {len(discovered)} expected nodes!")
+            break
+        elif attempt < max_attempts:
+            print(f"[INFO] Waiting 10s for remaining VM network interfaces to initialize...")
+            time.sleep(10)
+
+    print(f"\n[INFO] Final discovery count: {len(discovered)} of {len(expected)} expected nodes.")
     update_inventory_and_hosts(discovered)
 
 if __name__ == "__main__":
