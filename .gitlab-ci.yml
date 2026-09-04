@@ -8,14 +8,21 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == "web"
     - if: $CI_PIPELINE_SOURCE == "manual"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Deploy from main when something that actually affects the deployment
+    # changed. This was previously expressed as "never, if docs changed", but
+    # rules:changes matches when ANY listed path changed - so an ordinary commit
+    # touching both code and a doc silently skipped the whole pipeline. Listing
+    # the deployment-relevant paths positively gives the behaviour that was
+    # intended: docs-only pushes don't deploy, mixed pushes do.
     - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       changes:
-        - "*.md"
-        - "docs/**/*"
-        - "LICENSE"
-        - ".gitignore"
-      when: never
-    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+        - ".gitlab-ci.yml"
+        - ".gitlab/**/*"
+        - "ansible/**/*"
+        - "environments/**/*"
+        - "terraform/**/*"
+        - "scripts/**/*"
+        - "Makefile"
 
 variables:
   TARGET_ENV:
