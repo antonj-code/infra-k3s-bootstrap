@@ -164,13 +164,13 @@ variable "worker_count" {
 variable "control_plane_vmid_start" {
   description = "Starting Proxmox VM ID for K3s Control Plane nodes"
   type        = number
-  default     = 2001
+  default     = 3001
 }
 
 variable "worker_vmid_start" {
   description = "Starting Proxmox VM ID for K3s Worker nodes"
   type        = number
-  default     = 2011
+  default     = 3011
 }
 
 variable "template_version" {

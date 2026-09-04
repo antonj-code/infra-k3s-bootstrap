@@ -11,8 +11,8 @@ The infrastructure enforces strict isolation between environments:
 | Feature | STAGE Environment | PROD Environment |
 | :--- | :--- | :--- |
 | **Proxmox VE Hypervisor** | `guardian.jnet.lan` | `colossus.jnet.lan` |
-| **Control Plane Nodes** | 3x (`k3s-cp-s-*`, VMs `2001-2003`) | 3x (`k3s-cp-p-*`, VMs `3001-3003`) |
-| **Worker Nodes** | 3x (`k3s-wk-s-*`, VMs `2011-2013`) | 5x (`k3s-wk-p-*`, VMs `3011-3015`) |
+| **Control Plane Nodes** | 3x (`k3s-cp-s-*`, VMs `3001-3003`) | 3x (`k3s-cp-p-*`, VMs `4001-4003`) |
+| **Worker Nodes** | 3x (`k3s-wk-s-*`, VMs `3011-3013`) | 5x (`k3s-wk-p-*`, VMs `4011-4015`) |
 | **Total Cluster Size** | **6 Nodes** | **8 Nodes** |
 | **Control Plane VIP** | `192.168.0.43` (`k3s-stage.jnet.lan`) | `192.168.0.44` (`k3s-prod.jnet.lan`) |
 | **Internal Cluster Network**| VLAN `20` (`10.20.20.0/24`) | VLAN `30` (`10.30.30.0/24`) |
@@ -77,7 +77,7 @@ git push origin v1.1.0
 - **Pipeline Behavior**:
   - GitLab detects the version tag (`v*` or `prod-*`).
   - STAGE is **completely bypassed** (`when: never`).
-  - The **PROD child pipeline** immediately executes against **`colossus`** (provisions VMs `3001-3015`, hardens AlmaLinux 9, configures K3s with VIP `192.168.0.44`, and asserts 8/8 nodes Ready).
+  - The **PROD child pipeline** immediately executes against **`colossus`** (provisions VMs `4001-4015`, hardens AlmaLinux 9, configures K3s with VIP `192.168.0.44`, and asserts 8/8 nodes Ready).
 
 ---
 

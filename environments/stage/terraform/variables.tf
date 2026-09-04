@@ -99,11 +99,11 @@ variable "worker_count" {
 }
 variable "control_plane_vmid_start" {
   type        = number
-  default     = 2001
+  default     = 3001
 }
 variable "worker_vmid_start" {
   type        = number
-  default     = 2011
+  default     = 3011
 }
 variable "template_version" {
   type        = string

@@ -10,7 +10,7 @@ all:
             k3s-cp-p-a1b2:
               ansible_host: 192.168.0.211
               k3s_internal_ip: 10.30.30.11
-              k3s_node_id: 3001
+              k3s_node_id: 4001
               pve_host: colossus
               node_role: control-plane
               k3s_node_type: management
@@ -20,7 +20,7 @@ all:
             k3s-cp-p-c3d4:
               ansible_host: 192.168.0.212
               k3s_internal_ip: 10.30.30.12
-              k3s_node_id: 3002
+              k3s_node_id: 4002
               pve_host: colossus
               node_role: control-plane
               k3s_node_type: management
@@ -30,7 +30,7 @@ all:
             k3s-cp-p-e5f6:
               ansible_host: 192.168.0.213
               k3s_internal_ip: 10.30.30.13
-              k3s_node_id: 3003
+              k3s_node_id: 4003
               pve_host: colossus
               node_role: control-plane
               k3s_node_type: management
@@ -42,7 +42,7 @@ all:
             k3s-wk-p-g7h8:
               ansible_host: 192.168.0.221
               k3s_internal_ip: 10.30.30.21
-              k3s_node_id: 3011
+              k3s_node_id: 4011
               pve_host: colossus
               node_role: worker
               k3s_node_type: compute
@@ -53,7 +53,7 @@ all:
             k3s-wk-p-j9k0:
               ansible_host: 192.168.0.222
               k3s_internal_ip: 10.30.30.22
-              k3s_node_id: 3012
+              k3s_node_id: 4012
               pve_host: colossus
               node_role: worker
               k3s_node_type: compute
@@ -64,7 +64,7 @@ all:
             k3s-wk-p-m1n2:
               ansible_host: 192.168.0.223
               k3s_internal_ip: 10.30.30.23
-              k3s_node_id: 3013
+              k3s_node_id: 4013
               pve_host: colossus
               node_role: worker
               k3s_node_type: compute
@@ -75,7 +75,7 @@ all:
             k3s-wk-p-p3q4:
               ansible_host: 192.168.0.224
               k3s_internal_ip: 10.30.30.24
-              k3s_node_id: 3014
+              k3s_node_id: 4014
               pve_host: colossus
               node_role: worker
               k3s_node_type: compute
@@ -86,7 +86,7 @@ all:
             k3s-wk-p-s5t6:
               ansible_host: 192.168.0.225
               k3s_internal_ip: 10.30.30.25
-              k3s_node_id: 3015
+              k3s_node_id: 4015
               pve_host: colossus
               node_role: worker
               k3s_node_type: compute

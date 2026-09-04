@@ -21,20 +21,20 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 |  STAGE CLUSTER (Proxmox VE Host: guardian.jnet.lan)                                              |
 |                                                                                                   |
 |  Control Plane Nodes (HA Embedded etcd, N=3)           Worker Nodes (Workloads & Longhorn CSI)    |
-|  • k3s-cp-s-XXXX (VM 2001, net1: 10.20.20.11)          • k3s-wk-s-AAAA (VM 2011, net1: 10.20.20.21)|
-|  • k3s-cp-s-YYYY (VM 2002, net1: 10.20.20.12)          • k3s-wk-s-BBBB (VM 2012, net1: 10.20.20.22)|
-|  • k3s-cp-s-ZZZZ (VM 2003, net1: 10.20.20.13)          • k3s-wk-s-CCCC (VM 2013, net1: 10.20.20.23)|
+|  • k3s-cp-s-XXXX (VM 3001, net1: 10.20.20.11)          • k3s-wk-s-AAAA (VM 3011, net1: 10.20.20.21)|
+|  • k3s-cp-s-YYYY (VM 3002, net1: 10.20.20.12)          • k3s-wk-s-BBBB (VM 3012, net1: 10.20.20.22)|
+|  • k3s-cp-s-ZZZZ (VM 3003, net1: 10.20.20.13)          • k3s-wk-s-CCCC (VM 3013, net1: 10.20.20.23)|
 |                                                                                                   |
 |  VIP: 192.168.0.43 (k3s-stage.jnet.lan) | net0: DHCP (192.168.0.0/24) | net1: VLAN 20 (10.20.20.0/24) |
 +---------------------------------------------------------------------------------------------------+
 |  PROD CLUSTER (Proxmox VE Host: colossus.jnet.lan)                                               |
 |                                                                                                   |
 |  Control Plane Nodes (HA Embedded etcd, N=3)           Worker Nodes (Workloads & Longhorn CSI, N=5)|
-|  • k3s-cp-p-XXXX (VM 3001, net1: 10.30.30.11)          • k3s-wk-p-AAAA (VM 3011, net1: 10.30.30.21)|
-|  • k3s-cp-p-YYYY (VM 3002, net1: 10.30.30.12)          • k3s-wk-p-BBBB (VM 3012, net1: 10.30.30.22)|
-|  • k3s-cp-p-ZZZZ (VM 3003, net1: 10.30.30.13)          • k3s-wk-p-CCCC (VM 3013, net1: 10.30.30.23)|
-|                                                        • k3s-wk-p-DDDD (VM 3014, net1: 10.30.30.24)|
-|                                                        • k3s-wk-p-EEEE (VM 3015, net1: 10.30.30.25)|
+|  • k3s-cp-p-XXXX (VM 4001, net1: 10.30.30.11)          • k3s-wk-p-AAAA (VM 4011, net1: 10.30.30.21)|
+|  • k3s-cp-p-YYYY (VM 4002, net1: 10.30.30.12)          • k3s-wk-p-BBBB (VM 4012, net1: 10.30.30.22)|
+|  • k3s-cp-p-ZZZZ (VM 4003, net1: 10.30.30.13)          • k3s-wk-p-CCCC (VM 4013, net1: 10.30.30.23)|
+|                                                        • k3s-wk-p-DDDD (VM 4014, net1: 10.30.30.24)|
+|                                                        • k3s-wk-p-EEEE (VM 4015, net1: 10.30.30.25)|
 |                                                                                                   |
 |  VIP: 192.168.0.44 (k3s-prod.jnet.lan)  | net0: DHCP (192.168.0.0/24) | net1: VLAN 30 (10.30.30.0/24) |
 +---------------------------------------------------------------------------------------------------+
@@ -48,15 +48,15 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 
 | Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 20 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS | Proxmox Host |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`k3s-cp-s-<rand>`** | Control Plane (x3) | `2001 - 2003` | DHCP (`192.168.0.x`) | `10.20.20.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `guardian` |
-| **`k3s-wk-s-<rand>`** | Worker / Storage (x3)| `2011 - 2013` | DHCP (`192.168.0.x`) | `10.20.20.21 - 23` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) | `guardian` |
+| **`k3s-cp-s-<rand>`** | Control Plane (x3) | `3001 - 3003` | DHCP (`192.168.0.x`) | `10.20.20.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `guardian` |
+| **`k3s-wk-s-<rand>`** | Worker / Storage (x3)| `3011 - 3013` | DHCP (`192.168.0.x`) | `10.20.20.21 - 23` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) | `guardian` |
 
 ### PROD Environment (Proxmox Host: `colossus`)
 
 | Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 30 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS | Proxmox Host |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`k3s-cp-p-<rand>`** | Control Plane (x3) | `3001 - 3003` | DHCP (`192.168.0.x`) | `10.30.30.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `colossus` |
-| **`k3s-wk-p-<rand>`** | Worker / Storage (x5)| `3011 - 3015` | DHCP (`192.168.0.x`) | `10.30.30.21 - 25` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
+| **`k3s-cp-p-<rand>`** | Control Plane (x3) | `4001 - 4003` | DHCP (`192.168.0.x`) | `10.30.30.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `colossus` |
+| **`k3s-wk-p-<rand>`** | Worker / Storage (x5)| `4011 - 4015` | DHCP (`192.168.0.x`) | `10.30.30.21 - 25` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
 
 ---
 

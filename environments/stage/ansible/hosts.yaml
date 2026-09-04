@@ -10,7 +10,7 @@ all:
             k3s-cp-s-a1b2:
               ansible_host: 192.168.0.211
               k3s_internal_ip: 10.20.20.11
-              k3s_node_id: 2001
+              k3s_node_id: 3001
               pve_host: guardian
               node_role: control-plane
               k3s_node_type: management
@@ -20,7 +20,7 @@ all:
             k3s-cp-s-c3d4:
               ansible_host: 192.168.0.212
               k3s_internal_ip: 10.20.20.12
-              k3s_node_id: 2002
+              k3s_node_id: 3002
               pve_host: guardian
               node_role: control-plane
               k3s_node_type: management
@@ -30,7 +30,7 @@ all:
             k3s-cp-s-e5f6:
               ansible_host: 192.168.0.213
               k3s_internal_ip: 10.20.20.13
-              k3s_node_id: 2003
+              k3s_node_id: 3003
               pve_host: guardian
               node_role: control-plane
               k3s_node_type: management
@@ -42,7 +42,7 @@ all:
             k3s-wk-s-g7h8:
               ansible_host: 192.168.0.221
               k3s_internal_ip: 10.20.20.21
-              k3s_node_id: 2011
+              k3s_node_id: 3011
               pve_host: guardian
               node_role: worker
               k3s_node_type: compute
@@ -53,7 +53,7 @@ all:
             k3s-wk-s-j9k0:
               ansible_host: 192.168.0.222
               k3s_internal_ip: 10.20.20.22
-              k3s_node_id: 2012
+              k3s_node_id: 3012
               pve_host: guardian
               node_role: worker
               k3s_node_type: compute
@@ -64,7 +64,7 @@ all:
             k3s-wk-s-m1n2:
               ansible_host: 192.168.0.223
               k3s_internal_ip: 10.20.20.23
-              k3s_node_id: 2013
+              k3s_node_id: 3013
               pve_host: guardian
               node_role: worker
               k3s_node_type: compute
