@@ -184,7 +184,7 @@ def check_port_22(ip):
 def scan_live_ips():
     ips = [f"{SUBNET_PREFIX}.{i}" for i in range(2, 255)]
     live = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         results = executor.map(check_port_22, ips)
         for r in results:
             if r:
