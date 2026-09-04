@@ -74,6 +74,8 @@ k3s_control_plane_firewall_ports:
   - "2379-2380/tcp"  # Embedded etcd client and peer communication
   - "10250/tcp"      # Kubelet API & metrics
   - "2112/tcp"       # kube-vip Prometheus metrics endpoint
+  - "53/udp"         # CoreDNS (DNS service on 10.43.0.10)
+  - "53/tcp"         # CoreDNS TCP
   - "8472/udp"       # Flannel VXLAN overlay (if used)
   - "51820/udp"      # Flannel Wireguard (IPv4)
   - "51821/udp"      # Flannel Wireguard (IPv6)
@@ -83,6 +85,8 @@ k3s_control_plane_firewall_ports:
 # Firewall ports for Workers
 k3s_worker_firewall_ports:
   - "10250/tcp"      # Kubelet API & metrics
+  - "53/udp"         # CoreDNS (DNS service on 10.43.0.10)
+  - "53/tcp"         # CoreDNS TCP
   - "8472/udp"       # Flannel VXLAN overlay (if used)
   - "51820/udp"      # Flannel Wireguard (IPv4)
   - "51821/udp"      # Flannel Wireguard (IPv6)
