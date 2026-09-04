@@ -3,16 +3,10 @@
 
 server: "https://{{ kube_vip_address | default(hostvars[k3s_primary_control_plane]['ansible_host']) }}:{{ k3s_api_port }}"
 token: "{{ k3s_token }}"
-{# node-ip only moves to the internal network (net1) once every node in the
-   fleet has it - see k3s_common's fleet-readiness check. A node with an
-   internal-only address is unroutable, not just unreachable, to any peer
-   that hasn't been recreated with net1 yet (breaks flannel host-gw). #}
-node-ip: "{{ k3s_internal_ip if k3s_internal_network_ready else ansible_host }}"
+node-ip: "{{ k3s_internal_ip }}"
 node-external-ip: "{{ ansible_host }}"
 node-name: "{{ inventory_hostname }}"
-{% if k3s_internal_network_ready %}
-flannel-iface: "{{ k3s_internal_interface }}"
-{% endif %}
+flannel-iface: "{{ k3s_internal_interface | default(ansible_default_ipv4.interface) }}"
 
 # SELinux Integration
 {% if k3s_selinux | default(true) %}

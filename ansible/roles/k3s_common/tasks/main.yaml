@@ -44,7 +44,7 @@
 # across templates - so resolve it by matching the IP against this host's
 # own facts rather than assuming a name like "eth1". Falls back to an empty
 # string (rather than erroring) when net1 isn't present on this node yet.
-- name: Determine local network interface matching the internal cluster IP (net1 / VLAN 20), if present
+- name: Determine local network interface matching the internal cluster IP (net1 / VLAN 20/30)
   ansible.builtin.set_fact:
     k3s_internal_interface: >-
       {{ (ansible_facts.interfaces
@@ -52,40 +52,7 @@
           | selectattr('ipv4', 'defined')
           | selectattr('ipv4.address', 'equalto', k3s_internal_ip)
           | map(attribute='device')
-          | list | first) | default('', true) }}
-
-# --- Step 0.6: Determine Fleet-Wide Internal Network Readiness ---
-# node-ip/advertise-address/flannel-iface can only safely move to net1 once
-# EVERY node in the cluster has it. A node with an internal-only address is
-# not just "unreachable right now" to a peer that hasn't been recreated with
-# net1 yet - there is literally no route, since that peer has no NIC on
-# VLAN 20 at all. That silently breaks etcd replication (advertise-address)
-# and flannel host-gw routing (node-ip) between converted and unconverted
-# nodes. Probe every other cluster member's internal IP - not their k3s API,
-# since a peer can have net1 but be mid-restart - and only switch this node
-# to internal addressing once 100% of the fleet answers. This makes the
-# net1 cutover self-healing across incremental single-node recoveries:
-# every node keeps using external addressing consistently until the last
-# node in the fleet is converted, then everyone flips to internal together.
-# SSH (22) is used as the reachability probe rather than a k3s port so this
-# doesn't depend on any cluster service being up, and rather than ICMP so it
-# doesn't depend on a ping binary being present on the hardened CIS image.
-- name: Check reachability of all other cluster nodes on the internal cluster network
-  ansible.builtin.wait_for:
-    host: "{{ hostvars[item]['k3s_internal_ip'] }}"
-    port: 22
-    timeout: 5
-  loop: "{{ groups['k3s_cluster'] | difference([inventory_hostname]) }}"
-  register: k3s_internal_peer_check
-  ignore_errors: true
-  changed_when: false
-
-- name: Determine whether the internal cluster network is fully rolled out fleet-wide
-  ansible.builtin.set_fact:
-    k3s_internal_network_ready: >-
-      {{ (k3s_internal_interface | default('')) != ''
-         and (k3s_internal_peer_check.results | selectattr('failed', 'equalto', false) | list | length)
-             == (groups['k3s_cluster'] | difference([inventory_hostname]) | list | length) }}
+          | list | first) | default(ansible_default_ipv4.interface, true) }}
 
 # --- Step 1: Swap Management ---
 - name: Disable active swap space immediately
