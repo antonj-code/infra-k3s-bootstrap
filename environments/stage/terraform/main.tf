@@ -22,7 +22,7 @@ provider "proxmox" {
 }
 
 module "k3s_nodes" {
-  source = "../../terraform/modules/k3s_nodes"
+  source = "../../../terraform/modules/k3s_nodes"
 
   environment                   = "stage"
   inventory_output_path         = "${path.module}/../ansible/hosts.yaml"
