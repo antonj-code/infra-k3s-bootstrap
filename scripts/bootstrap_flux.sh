@@ -34,29 +34,51 @@ fi
 export KUBECONFIG="${KUBECONFIG_FILE}"
 
 # 1. Fetch GitLab Access Token from Vault
-echo "[STEP 1/4] Retrieving GitLab Token from Vault..."
+# Read from the same env-scoped path everything else in this repo uses
+# (secret/data/k3s-<env>/credentials). The previous path, secret/gitlab/
+# credentials, was never written by vault_seed.sh nor covered by the
+# k3s-bootstrap Vault policy, so this lookup always came back empty.
+VAULT_CREDENTIALS_PATH="secret/data/k3s-${ENV}/credentials"
+echo "[STEP 1/4] Retrieving GitLab Token from Vault (${VAULT_CREDENTIALS_PATH})..."
 GITLAB_TOKEN="${GITLAB_TOKEN:-}"
 if [[ -z "${GITLAB_TOKEN}" && -n "${VAULT_TOKEN}" ]]; then
-    GITLAB_SECRET_JSON=$(curl -k -s -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/secret/data/gitlab/credentials" | jq -r '.data.data // empty' 2>/dev/null || echo "")
+    GITLAB_SECRET_JSON=$(curl -k -s -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/${VAULT_CREDENTIALS_PATH}" | jq -r '.data.data // empty' 2>/dev/null || echo "")
     if [[ -n "${GITLAB_SECRET_JSON}" ]]; then
-        GITLAB_TOKEN=$(echo "${GITLAB_SECRET_JSON}" | jq -r '.gitlab_token // .token // empty')
+        GITLAB_TOKEN=$(echo "${GITLAB_SECRET_JSON}" | jq -r '.gitlab_token // empty')
     fi
 fi
 
 if [[ -z "${GITLAB_TOKEN}" ]]; then
-    echo "[ERROR] Failed to obtain GITLAB_TOKEN from Vault (secret/gitlab/credentials) or environment."
+    echo "[ERROR] Failed to obtain a GitLab token."
+    echo "        Expected field 'gitlab_token' at ${VAULT_CREDENTIALS_PATH}, or a GITLAB_TOKEN environment variable."
+    echo "        Seed it with: GITLAB_TOKEN=<pat> bash scripts/vault_seed.sh ${ENV}"
     exit 1
 fi
 export GITLAB_TOKEN
 
-# 2. Extract GitLab Internal CA Certificate
-echo "[STEP 2/4] Downloading GitLab CA certificate from ${GITLAB_HOST}:443..."
+# 2. Extract the GitLab TLS chain to use as the trust bundle
+# Piping -showcerts through `openssl x509` only ever emits the FIRST cert in
+# the chain - the server's own leaf - which is not the issuing CA and only
+# validates by accident when the cert is self-signed. Keep the whole chain
+# instead: flux's --ca-file takes a PEM bundle, and a chain that terminates at
+# an intermediate is still a usable trust anchor for the in-cluster
+# source-controller.
+echo "[STEP 2/4] Downloading GitLab TLS chain from ${GITLAB_HOST}:443..."
 CA_FILE="/tmp/gitlab-ca.crt"
-if openssl s_client -showcerts -connect "${GITLAB_HOST}:443" </dev/null 2>/dev/null | openssl x509 -outform PEM > "${CA_FILE}"; then
-    echo "[OK] CA certificate saved to ${CA_FILE}"
+openssl s_client -showcerts -connect "${GITLAB_HOST}:443" </dev/null 2>/dev/null \
+    | awk '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/' > "${CA_FILE}" || true
+
+CERT_COUNT=$(grep -c 'BEGIN CERTIFICATE' "${CA_FILE}" 2>/dev/null || echo "0")
+if [[ "${CERT_COUNT}" -gt 0 ]]; then
+    echo "[OK] Saved ${CERT_COUNT} certificate(s) from the served chain to ${CA_FILE}"
 else
-    echo "[WARN] Could not retrieve CA from ${GITLAB_HOST}:443 via openssl; checking system certificates."
-    CA_FILE=""
+    # Don't silently fall back to the system trust store: if gitbox uses a
+    # private CA that isn't installed in this image, flux bootstrap fails on an
+    # opaque TLS error instead of telling you the CA was never fetched.
+    echo "[ERROR] Could not retrieve any certificate from ${GITLAB_HOST}:443."
+    echo "        Flux would fall back to the system trust store and fail TLS verification"
+    echo "        against the internal CA. Check connectivity to ${GITLAB_HOST}:443 from this runner."
+    exit 1
 fi
 
 # 3. Ensure Flux CLI is available
