@@ -3,6 +3,7 @@
 *.tfstate
 *.tfstate.*
 *.tfvars
+!environments/*/terraform/terraform.tfvars
 !*.tfvars.example
 terraform.auto.tfvars.json
 .terraform.lock.hcl
