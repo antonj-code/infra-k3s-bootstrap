@@ -33,25 +33,51 @@ if [[ ! -f "${KUBECONFIG_FILE}" ]]; then
 fi
 export KUBECONFIG="${KUBECONFIG_FILE}"
 
-# 1. Fetch GitLab Access Token from Vault
-# Read from the same env-scoped path everything else in this repo uses
-# (secret/data/k3s-<env>/credentials). The previous path, secret/gitlab/
-# credentials, was never written by vault_seed.sh nor covered by the
-# k3s-bootstrap Vault policy, so this lookup always came back empty.
-VAULT_CREDENTIALS_PATH="secret/data/k3s-${ENV}/credentials"
-echo "[STEP 1/4] Retrieving GitLab Token from Vault (${VAULT_CREDENTIALS_PATH})..."
+# 1. Resolve the GitLab Access Token
+# Sources, in order of precedence:
+#   1. the GITLAB_TOKEN environment variable (e.g. a masked CI/CD variable)
+#   2. secret/data/k3s-<env>/credentials - env-scoped, written by vault_seed.sh
+#      alongside the rest of this environment's credentials
+#   3. secret/data/gitlab/credentials - shared path, the natural home for a
+#      credential that isn't environment-specific: one place to rotate it
+# Reading (3) requires the Vault policy to grant read on secret/data/gitlab/*
+# (see docs/vault-integration.md) - the k3s-bootstrap policy historically only
+# covered the k3s-<env> prefixes, so a token stored there returned 403 and the
+# lookup silently came back empty.
+VAULT_TOKEN_PATHS=(
+    "secret/data/k3s-${ENV}/credentials"
+    "secret/data/gitlab/credentials"
+)
+
 GITLAB_TOKEN="${GITLAB_TOKEN:-}"
-if [[ -z "${GITLAB_TOKEN}" && -n "${VAULT_TOKEN}" ]]; then
-    GITLAB_SECRET_JSON=$(curl -k -s -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/${VAULT_CREDENTIALS_PATH}" | jq -r '.data.data // empty' 2>/dev/null || echo "")
-    if [[ -n "${GITLAB_SECRET_JSON}" ]]; then
-        GITLAB_TOKEN=$(echo "${GITLAB_SECRET_JSON}" | jq -r '.gitlab_token // empty')
-    fi
+if [[ -n "${GITLAB_TOKEN}" ]]; then
+    echo "[STEP 1/4] Using GitLab token from the environment."
+elif [[ -z "${VAULT_TOKEN}" ]]; then
+    echo "[STEP 1/4] No GITLAB_TOKEN in the environment, and no VAULT_TOKEN to look one up with."
+else
+    for token_path in "${VAULT_TOKEN_PATHS[@]}"; do
+        echo "[STEP 1/4] Looking for a GitLab token at ${token_path}..."
+        GITLAB_SECRET_JSON=$(curl -k -s -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/${token_path}" | jq -r '.data.data // empty' 2>/dev/null || echo "")
+        if [[ -n "${GITLAB_SECRET_JSON}" ]]; then
+            GITLAB_TOKEN=$(echo "${GITLAB_SECRET_JSON}" | jq -r '.gitlab_token // empty')
+        fi
+        if [[ -n "${GITLAB_TOKEN}" ]]; then
+            echo "[OK] GitLab token resolved from ${token_path}"
+            break
+        fi
+    done
 fi
 
 if [[ -z "${GITLAB_TOKEN}" ]]; then
-    echo "[ERROR] Failed to obtain a GitLab token."
-    echo "        Expected field 'gitlab_token' at ${VAULT_CREDENTIALS_PATH}, or a GITLAB_TOKEN environment variable."
-    echo "        Seed it with: GITLAB_TOKEN=<pat> bash scripts/vault_seed.sh ${ENV}"
+    echo "[ERROR] Failed to obtain a GitLab token. Checked, in order:"
+    echo "          - GITLAB_TOKEN environment variable"
+    for token_path in "${VAULT_TOKEN_PATHS[@]}"; do
+        echo "          - field 'gitlab_token' at ${token_path}"
+    done
+    echo "        Fix by either:"
+    echo "          GITLAB_TOKEN=<pat> bash scripts/vault_seed.sh ${ENV}"
+    echo "          or setting GITLAB_TOKEN as a masked CI/CD variable."
+    echo "        Note: reading secret/data/gitlab/* requires that prefix in the Vault policy."
     exit 1
 fi
 export GITLAB_TOKEN

@@ -104,6 +104,18 @@ path "secret/data/k3s-prod/*" {
 path "secret/metadata/k3s-prod/*" {
   capabilities = ["read", "list", "delete"]
 }
+
+# Shared, non-environment-specific credentials.
+# scripts/bootstrap_flux.sh falls back to secret/data/gitlab/credentials for the
+# GitLab access token, so that a single PAT can serve both clusters and be
+# rotated in one place. Without this grant the read returns 403 and the Flux
+# bootstrap fails with an empty token.
+path "secret/data/gitlab/*" {
+  capabilities = ["read"]
+}
+path "secret/metadata/gitlab/*" {
+  capabilities = ["read", "list"]
+}
 EOF
 
 # 2. Store K3s Stage Bootstrap Token & Network Config
