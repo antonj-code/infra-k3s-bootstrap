@@ -179,7 +179,9 @@ prod:ansible:configure:
     - cd ${ANSIBLE_ROOT}
     - ansible-galaxy collection install -r requirements.yaml || true
     - bash ${CI_PROJECT_DIR}/scripts/discover_node_ips.sh prod
+    - python3 -c 'import fcntl, os; [fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK) for fd in (0, 1, 2)]'
   script:
+    - python3 -c 'import fcntl, os; [fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK) for fd in (0, 1, 2)]'
     - ansible-playbook -i ${CI_PROJECT_DIR}/environments/prod/ansible/hosts.yaml playbooks/site.yaml < /dev/null
     - |
       mkdir -p ${CI_PROJECT_DIR}/credentials/prod
@@ -274,6 +276,7 @@ prod:recover:node:
         -backend-config="skip_cert_verification=true"
   script:
     - if [ -z "${NODE_NAME}" ]; then echo "[ERROR] NODE_NAME is required (e.g. k3s-wk-p-g7h8)."; exit 1; fi
+    - python3 -c 'import fcntl, os; [fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK) for fd in (0, 1, 2)]'
     - bash ${CI_PROJECT_DIR}/scripts/redeploy_node.sh "${NODE_NAME}" prod
   rules:
     - if: $PIPELINE_ACTION == "recover-node"
