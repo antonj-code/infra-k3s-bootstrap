@@ -69,7 +69,7 @@ flux --version
 
 # 4. Execute Flux Bootstrap
 # Note: jnet-labs is a Group, so we do NOT pass --personal.
-# Running WITHOUT --token-auth configures Flux to automatically generate and register an SSH Deploy Key in GitLab!
+# --token-auth uses the GitLab Access Token over HTTPS with the internal CA certificate.
 echo "[STEP 4/4] Running Flux bootstrap for GitLab..."
 
 BOOTSTRAP_ARGS=(
@@ -79,6 +79,8 @@ BOOTSTRAP_ARGS=(
     --repository="${GITLAB_REPO}"
     --branch="${GITLAB_BRANCH}"
     --path="${CLUSTER_PATH}"
+    --token-auth
+    --timeout=5m
 )
 
 if [[ -n "${CA_FILE}" && -s "${CA_FILE}" ]]; then
