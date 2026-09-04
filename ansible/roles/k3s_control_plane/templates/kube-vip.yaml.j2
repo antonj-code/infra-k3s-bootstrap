@@ -71,6 +71,10 @@ spec:
           env:
             - name: vip_arp
               value: "true"
+            - name: vip_arp_interval
+              value: "2"
+            - name: vip_arp_count
+              value: "5"
             - name: port
               value: "{{ k3s_api_port }}"
             - name: vip_interface
@@ -84,9 +88,9 @@ spec:
             - name: vip_leaderelection
               value: "true"
             - name: vip_leaseduration
-              value: "5"
-            - name: vip_renewdeadline
               value: "3"
+            - name: vip_renewdeadline
+              value: "2"
             - name: vip_retryperiod
               value: "1"
             - name: address
