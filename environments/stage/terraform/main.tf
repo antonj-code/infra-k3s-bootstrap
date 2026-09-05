@@ -2,7 +2,7 @@
 provider "proxmox" {
   alias     = "pve1"
   endpoint  = var.pve_host_1_endpoint
-  api_token = var.pve_host_1_api_token != "" ? var.pve_host_1_api_token : (var.pve_api_token != "" ? var.pve_api_token : "dummy")
+  api_token = var.pve_host_1_api_token != "" ? var.pve_host_1_api_token : var.pve_api_token
   insecure  = var.proxmox_insecure
 
   ssh {
@@ -13,7 +13,7 @@ provider "proxmox" {
 # Proxmox Host 2 Provider (guardian.jnet.lan) - Default
 provider "proxmox" {
   endpoint  = var.pve_host_2_endpoint != "" ? var.pve_host_2_endpoint : var.pve_endpoint
-  api_token = var.pve_host_2_api_token != "" ? var.pve_host_2_api_token : (var.pve_api_token != "" ? var.pve_api_token : "dummy")
+  api_token = var.pve_host_2_api_token != "" ? var.pve_host_2_api_token : var.pve_api_token
   insecure  = var.proxmox_insecure
 
   ssh {
@@ -21,8 +21,31 @@ provider "proxmox" {
   }
 }
 
+# TF_VAR_pve_host_1_api_token / TF_VAR_pve_host_2_api_token are Protected
+# GitLab CI/CD variables (see docs/gitlab-setup.md) and are only injected into
+# pipelines running on a protected branch or protected tag. A pipeline
+# triggered by a tag that isn't covered by a Protected Tags rule runs with
+# these silently empty, which used to fall through to a hardcoded "dummy"
+# placeholder that the bpg/proxmox provider also can't parse - surfacing as
+# the opaque "Unable to create Proxmox VE API credentials" error, identical to
+# what a genuinely wrong or expired token produces. Fail here instead, with a
+# message that names the actual cause.
+resource "terraform_data" "proxmox_credentials_guard" {
+  lifecycle {
+    precondition {
+      condition     = var.pve_host_1_api_token != "" || var.pve_api_token != ""
+      error_message = "No Proxmox API token for host1 (colossus): TF_VAR_pve_host_1_api_token and TF_VAR_pve_api_token are both empty. If this pipeline was triggered by a tag, confirm it's covered by a Protected Tags rule in GitLab (Settings > Repository > Protected tags) - protected CI/CD variables are withheld from unprotected refs."
+    }
+    precondition {
+      condition     = var.pve_host_2_api_token != "" || var.pve_api_token != ""
+      error_message = "No Proxmox API token for host2 (guardian): TF_VAR_pve_host_2_api_token and TF_VAR_pve_api_token are both empty. If this pipeline was triggered by a tag, confirm it's covered by a Protected Tags rule in GitLab (Settings > Repository > Protected tags) - protected CI/CD variables are withheld from unprotected refs."
+    }
+  }
+}
+
 module "k3s_nodes" {
-  source = "../../../terraform/modules/k3s_nodes"
+  source     = "../../../terraform/modules/k3s_nodes"
+  depends_on = [terraform_data.proxmox_credentials_guard]
 
   environment                   = "stage"
   inventory_output_path         = "${path.module}/../ansible/hosts.yaml"
