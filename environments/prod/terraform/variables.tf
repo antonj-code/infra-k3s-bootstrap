@@ -85,6 +85,10 @@ variable "template_vm_id" {
   type        = number
   default     = 1001
 }
+variable "template_vm_id_override" {
+  type        = number
+  default     = null
+}
 variable "ci_user" {
   type        = string
   default     = "almalinux"

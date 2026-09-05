@@ -71,6 +71,7 @@ module "k3s_nodes" {
   ssh_public_keys               = var.ssh_public_keys
   template_registry             = var.template_registry
   template_vm_id                = var.template_vm_id
+  template_vm_id_override       = var.template_vm_id_override
   ci_user                       = var.ci_user
 
   control_plane_count           = var.control_plane_count

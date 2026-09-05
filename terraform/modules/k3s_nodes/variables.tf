@@ -142,6 +142,12 @@ variable "template_vm_id" {
   default     = 1001
 }
 
+variable "template_vm_id_override" {
+  description = "Explicit Proxmox template VM ID that bypasses template_registry/template_version lookup entirely. Leave null to use the registry."
+  type        = number
+  default     = null
+}
+
 variable "ci_user" {
   description = "Cloud-Init default administrator username"
   type        = string

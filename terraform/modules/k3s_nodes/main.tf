@@ -1,6 +1,9 @@
 locals {
-  parsed_ssh_keys       = can(tolist(var.ssh_public_keys)) ? tolist(var.ssh_public_keys) : [tostring(var.ssh_public_keys)]
-  active_template_vm_id = lookup(var.template_registry, var.template_version, var.template_vm_id)
+  parsed_ssh_keys = can(tolist(var.ssh_public_keys)) ? tolist(var.ssh_public_keys) : [tostring(var.ssh_public_keys)]
+  # template_vm_id_override bypasses the version registry entirely, for a
+  # one-off repave against a specific template ID (e.g. scripts/rolling_upgrade.sh
+  # --template-id) without editing terraform.tfvars' template_version.
+  active_template_vm_id = var.template_vm_id_override != null ? var.template_vm_id_override : lookup(var.template_registry, var.template_version, var.template_vm_id)
   env_char              = substr(var.environment, 0, 1) # 's' for stage, 'p' for prod
   active_pve_node       = var.pve_node_name != "" ? var.pve_node_name : (var.environment == "prod" ? var.pve_host_1_node_name : var.pve_host_2_node_name)
 }

@@ -38,6 +38,8 @@ bash scripts/rolling_upgrade.sh --mode repave --env stage --template-id 1001
 make repave ENV=prod
 ```
 
+`--template-id` overrides which Proxmox template VM ID gets cloned for this repave, without editing `terraform.tfvars`. It bypasses `template_registry`/`template_version` entirely for the run — pass the raw Proxmox VM ID of the template you want (e.g. `--template-id 1000` or `--template-id 1002` to bounce between kept-around releases). It's only valid with `--mode repave`; `in-place` mode never touches the VM template, so combining the two errors out.
+
 ### Option B: In-Place Rolling OS & K3s Updates
 ```bash
 # In-place rolling upgrade using Makefile:

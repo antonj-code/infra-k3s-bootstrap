@@ -45,6 +45,11 @@ echo "[INFO] Environment: ${ENV}"
 echo "[INFO] Mode: ${MODE}"
 if [[ -n "${NEW_TEMPLATE_ID}" ]]; then
     echo "[INFO] Target Template VM ID: ${NEW_TEMPLATE_ID}"
+    if [[ "${MODE}" != "repave" ]]; then
+        echo "[ERROR] --template-id only applies to --mode repave (in-place mode doesn't touch the VM template)."
+        exit 1
+    fi
+    export TEMPLATE_VM_ID_OVERRIDE="${NEW_TEMPLATE_ID}"
 fi
 echo "================================================================================"
 

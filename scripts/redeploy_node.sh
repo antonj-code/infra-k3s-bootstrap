@@ -132,7 +132,12 @@ if [[ ! -f "terraform.auto.tfvars.json" ]]; then
 EOF_JSON
 fi
 
-terraform apply -replace="${TF_RESOURCE}" -auto-approve -input=false
+TF_APPLY_ARGS=(-replace="${TF_RESOURCE}" -auto-approve -input=false)
+if [[ -n "${TEMPLATE_VM_ID_OVERRIDE:-}" ]]; then
+    echo "[INFO] Overriding template VM ID for this repave: ${TEMPLATE_VM_ID_OVERRIDE}"
+    TF_APPLY_ARGS+=(-var="template_vm_id_override=${TEMPLATE_VM_ID_OVERRIDE}")
+fi
+terraform apply "${TF_APPLY_ARGS[@]}"
 
 # Discover and update new DHCP IP address
 bash "${REPO_ROOT}/scripts/discover_node_ips.sh" "${ENV}"
