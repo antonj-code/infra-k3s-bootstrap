@@ -92,7 +92,7 @@ ansible-playbook -i ../environments/stage/ansible/hosts.yaml playbooks/redeploy_
 
 ## 5. Recovering Multiple Nodes
 
-`NODE_NAME` accepts exactly one hostname — there is no built-in "rebuild all of these at once" mode. To recover several lost nodes, run the pipeline **sequentially, one node per run**, letting each finish before starting the next:
+`NODE_NAME` accepts exactly one hostname - there is no built-in "rebuild all of these at once" mode. To recover several lost nodes, run the pipeline **sequentially, one node per run**, letting each finish before starting the next:
 
 1. Run Pipeline with `PIPELINE_ACTION=recover-node`, `NODE_NAME=<first-node>`.
 2. Wait for the job to finish and confirm `kubectl get nodes -o wide` shows it `Ready`.
@@ -100,6 +100,6 @@ ansible-playbook -i ../environments/stage/ansible/hosts.yaml playbooks/redeploy_
 
 **Do not fire these off in parallel as separate pipelines:**
 
-* **Terraform state locking** — the GitLab-managed HTTP backend locks state on `apply`. A second run starting mid-apply blocks/retries against the lock instead of running concurrently, so nothing is gained and the job logs get confusing.
-* **Control plane etcd cleanup targets "a survivor"** — the cleanup step runs on `(groups['k3s_control_plane'] | difference([target_node]))[0]`, i.e. the first remaining control plane node. If more than one control plane is down at the same time, that "first survivor" could itself be one of the dead nodes depending on inventory ordering. Recovering multiple **worker** nodes this way is safe regardless; recovering multiple **control plane** nodes sequentially is fine, but double-check `kubectl get nodes` between runs to make sure the previous one actually rejoined before starting the next.
+* **Terraform state locking** - the GitLab-managed HTTP backend locks state on `apply`. A second run starting mid-apply blocks/retries against the lock instead of running concurrently, so nothing is gained and the job logs get confusing.
+* **Control plane etcd cleanup targets "a survivor"** - the cleanup step runs on `(groups['k3s_control_plane'] | difference([target_node]))[0]`, i.e. the first remaining control plane node. If more than one control plane is down at the same time, that "first survivor" could itself be one of the dead nodes depending on inventory ordering. Recovering multiple **worker** nodes this way is safe regardless; recovering multiple **control plane** nodes sequentially is fine, but double-check `kubectl get nodes` between runs to make sure the previous one actually rejoined before starting the next.
 
