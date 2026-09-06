@@ -58,6 +58,15 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 | **`k3s-cp-p-<rand>`** | Control Plane (x3) | `4001 - 4003` | DHCP (`192.168.0.x`) | `10.30.30.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `colossus` |
 | **`k3s-wk-p-<rand>`** | Worker / Storage (x5)| `4011 - 4015` | DHCP (`192.168.0.x`) | `10.30.30.21 - 25` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
 
+### A Note on CPU/Memory Drift
+
+`cpu` and `memory` are both in each VM resource's `lifecycle.ignore_changes` block (`terraform/modules/k3s_nodes/main.tf`), the same way `clone` is. That's deliberate: it stops a routine `terraform apply` from trying to live-resize or reboot a running node just because someone else's change touched the module. The tradeoff is that it also means:
+
+* Bumping `worker_config.cores`/`memory` (or `control_plane_config`'s) in tfvars has no effect on existing VMs. A plain `apply` sees the diff and silently discards it. The new sizing only lands on a VM that gets recreated - either a full repave (`-replace`, `recover-node`, or `rolling_upgrade.sh --mode repave`) or a fresh node added to the pool.
+* A VM resized directly against Proxmox (`qm set`, or the UI) is likewise invisible to Terraform - no drift warning, ever. That's safe in the sense that Terraform won't fight you on the next apply, but it also means the table above can silently stop reflecting reality until someone checks Proxmox directly.
+
+Every worker in a pool also shares one `worker_config` object today, so there's no way to size an individual node differently without hand-editing state. See the dedicated compute/storage node pools item in the [Roadmap](../README.md#roadmap).
+
 ---
 
 ## 3. High Availability, kube-vip & Inter-Node Communication

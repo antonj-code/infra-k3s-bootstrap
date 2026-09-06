@@ -232,6 +232,7 @@ The `scripts/` directory has a few helpers for day-2 cluster maintenance:
 * **Golden Image Pipeline**: Automate the build of the AlmaLinux 9 CIS Level 2 template (VM `1001`) itself, so all hosts stay in sync without a manual template rebuild - the same gap `vault-bootstrap` has open for its own template.
 * **Monitoring Rollout**: Nodes are already labeled for it (`monitoring.jnet.lan/enabled`, `monitoring.jnet.lan/group`), but the Prometheus/VictoriaMetrics scrape stack that reads those labels isn't wired up yet.
 * **Short-Lived Kubeconfig Credentials**: The `kubeconfig` stored in Vault today is a long-lived static admin credential; moving to OIDC or short-lived certificates would shrink the blast radius if that Vault path were ever compromised.
+* **Dedicated Compute vs. Storage Worker Pools**: Every worker today is identical - one shared `worker_config` for cores/memory/disks, sized as a compute+storage generalist. At real scale that stops making sense: storage-heavy nodes (Longhorn) want different CPU/memory headroom than compute-heavy ones. Plan is a second node pool (its own count, VM ID range, and resource config, mirroring how control plane and worker pools already exist as separate resource blocks) rather than reworking the existing pool into a `for_each`, so it doesn't force a full repave of every current node just to add the distinction. See the CPU/Memory Drift note in [Architecture & Hardware Layout](docs/architecture.md#2-resource-allocation-matrix) for the related sizing-drift gap this would also help close.
 
 ---
 
