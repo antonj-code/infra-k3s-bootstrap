@@ -133,40 +133,39 @@
     # onto the paths each expects. Both then draw from the same 60GB pool
     # instead of needing a reserved slice apiece, which matters because the
     # image store's growth is driven by whatever gets scheduled.
-    - name: Survey the runtime bind targets for pre-existing content
+    # Anything already at these paths on a node this block runs against is
+    # scaffolding from package install - the k3s-selinux RPM creates
+    # /var/lib/rancher and /var/lib/kubelet with their policy contexts during
+    # k3s_common, before this role runs. It cannot be live cluster data: the
+    # enclosing block only executes when the agent has never been initialized.
+    # Relocate it into the backing store rather than bind-mounting over it,
+    # which would hide those files while they still consumed the /var LV this
+    # disk exists to relieve, and leave them invisible to df at that path.
+    - name: Relocate any pre-existing runtime directory contents onto the dedicated disk
       ansible.builtin.shell: |
-        p="{{ item.path }}"
-        if mountpoint -q "$p"; then
-          echo mounted
-        elif [ -d "$p" ] && [ -n "$(ls -A "$p" 2>/dev/null)" ]; then
-          echo populated
-        else
-          echo clear
+        set -e
+        src="{{ k3s_worker_runtime_mount | default('/mnt/k8s-data') }}/{{ item.subdir }}"
+        tgt="{{ item.path }}"
+        if mountpoint -q "$tgt"; then
+          echo unchanged
+          exit 0
         fi
-      register: runtime_bind_survey
-      changed_when: false
+        mkdir -p "$src"
+        if [ -d "$tgt" ] && [ -n "$(ls -A "$tgt" 2>/dev/null)" ]; then
+          # -a keeps ownership and mode; contexts are reapplied by the
+          # restorecon that follows the equivalency declaration below.
+          cp -a "$tgt"/. "$src"/
+          find "$tgt" -mindepth 1 -delete
+          echo migrated
+          exit 0
+        fi
+        mkdir -p "$tgt"
+        echo clear
+      register: runtime_bind_migration
+      changed_when: "'migrated' in runtime_bind_migration.stdout"
       loop: "{{ k3s_worker_runtime_binds }}"
       loop_control:
         label: "{{ item.path }}"
-
-    - name: Fail if a runtime bind target already holds data
-      # Bind-mounting over a populated directory hides its contents rather
-      # than moving them: the node would re-pull every image while the old
-      # copy still consumed the /var LV this disk exists to relieve, and the
-      # orphaned data would be invisible to df at that path. Migrating an
-      # in-place node is a separate, deliberate operation - fail closed here
-      # rather than silently stranding gigabytes.
-      ansible.builtin.assert:
-        that:
-          - item.stdout != 'populated'
-        fail_msg: >-
-          {{ item.item.path }} already contains data and is not a mount point.
-          Bind-mounting over it would orphan that data on the /var LV. Migrate it
-          onto {{ k3s_worker_runtime_mount | default('/mnt/k8s-data') }} manually
-          (stop k3s-agent, rsync, then swap the mount), or rebuild this node.
-      loop: "{{ runtime_bind_survey.results }}"
-      loop_control:
-        label: "{{ item.item.path }}"
 
     - name: Ensure runtime subdirectories exist on the dedicated disk
       ansible.builtin.file:
