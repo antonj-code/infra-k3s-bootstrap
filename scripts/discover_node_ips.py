@@ -49,6 +49,13 @@ VAULT_ADDR = os.environ.get("VAULT_ADDR", "https://192.168.0.40:8200").rstrip("/
 VAULT_TOKEN = os.environ.get("VAULT_TOKEN", "")
 SUBNET_PREFIX = os.environ.get("SUBNET_PREFIX", "192.168.0")
 SSH_USER = os.environ.get("ANSIBLE_USER", "almalinux")
+
+# MetalLB hands out LoadBalancer VIPs from this range (see infra-k3s-gitops,
+# infrastructure/base/metallb-pool). Those addresses float between nodes and
+# the QEMU guest agent reports them alongside the node's real DHCP lease, so
+# without excluding them every node gets "discovered" as the same VIP.
+LB_POOL_START = int(os.environ.get("LB_POOL_START", "50"))
+LB_POOL_END = int(os.environ.get("LB_POOL_END", "99"))
 if ENV == "prod":
     PVE_ENDPOINT = (
         os.environ.get("TF_VAR_pve_host_1_endpoint") or
@@ -128,6 +135,23 @@ def get_inventory_expected_nodes():
         expected[h] = {"role": "worker", "current_ip": v.get("ansible_host"), "vmid": v.get("k3s_node_id")}
     return expected
 
+def is_node_address(ip):
+    """True if `ip` can plausibly be a node's own address on the management subnet.
+
+    Excludes the gateway and the MetalLB VIP range: a LoadBalancer VIP is
+    answerable on whichever node currently announces it, so treating one as a
+    node address collapses the whole inventory onto a single host.
+    """
+    if not ip.startswith(f"{SUBNET_PREFIX}."):
+        return False
+    try:
+        last_octet = int(ip.rsplit(".", 1)[1])
+    except (ValueError, IndexError):
+        return False
+    if last_octet == 1:
+        return False
+    return not (LB_POOL_START <= last_octet <= LB_POOL_END)
+
 def query_pve_agent_ips():
     if not PVE_API_TOKEN:
         return {}
@@ -159,12 +183,18 @@ def query_pve_agent_ips():
                 )
                 with urllib.request.urlopen(agent_req, timeout=4, context=ctx) as agent_res:
                     ifaces = json.loads(agent_res.read().decode()).get("data", {}).get("result", [])
+                    # First match wins, across all interfaces: a later interface
+                    # must never overwrite an address already resolved for this VM.
+                    node_ip = None
                     for iface in ifaces:
                         for ip_entry in iface.get("ip-addresses", []):
-                            ip = ip_entry.get("ip-address", "")
-                            if ip.startswith(f"{SUBNET_PREFIX}.") and not ip.endswith(".1"):
-                                discovered[name] = ip
+                            if is_node_address(ip_entry.get("ip-address", "")):
+                                node_ip = ip_entry.get("ip-address", "")
                                 break
+                        if node_ip:
+                            break
+                    if node_ip:
+                        discovered[name] = node_ip
             except Exception:
                 pass
     except Exception as e:
@@ -182,7 +212,9 @@ def check_port_22(ip):
         return None
 
 def scan_live_ips():
-    ips = [f"{SUBNET_PREFIX}.{i}" for i in range(2, 255)]
+    # A node announcing a MetalLB VIP also answers SSH on it and reports its own
+    # hostname, so scanning that range maps real nodes onto floating addresses.
+    ips = [f"{SUBNET_PREFIX}.{i}" for i in range(2, 255) if is_node_address(f"{SUBNET_PREFIX}.{i}")]
     live = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         results = executor.map(check_port_22, ips)
