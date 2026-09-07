@@ -50,12 +50,26 @@ VAULT_TOKEN = os.environ.get("VAULT_TOKEN", "")
 SUBNET_PREFIX = os.environ.get("SUBNET_PREFIX", "192.168.0")
 SSH_USER = os.environ.get("ANSIBLE_USER", "almalinux")
 
-# MetalLB hands out LoadBalancer VIPs from this range (see infra-k3s-gitops,
-# infrastructure/base/metallb-pool). Those addresses float between nodes and
-# the QEMU guest agent reports them alongside the node's real DHCP lease, so
-# without excluding them every node gets "discovered" as the same VIP.
-LB_POOL_START = int(os.environ.get("LB_POOL_START", "50"))
-LB_POOL_END = int(os.environ.get("LB_POOL_END", "99"))
+# Cluster-managed virtual interfaces must be ignored when reading addresses
+# from the QEMU guest agent. With kube-proxy in IPVS mode, kube-ipvs0 holds
+# every service address - ClusterIPs and MetalLB LoadBalancer IPs alike - on
+# *every* node, so an address found there identifies the service, not the host.
+# Filtering by interface rather than by IP range matters here because the DHCP
+# scope and the MetalLB pool overlap: real nodes hold leases like .90/.91/.99,
+# which sit inside the LoadBalancer pool and cannot be excluded by address.
+VIRTUAL_IFACE_PREFIXES = (
+    "lo",
+    "kube-ipvs",
+    "kube-vip",
+    "flannel",
+    "cni",
+    "docker",
+    "veth",
+    "cali",
+    "tunl",
+    "vxlan",
+    "dummy",
+)
 
 # Escape hatch for deliberately degraded runs (e.g. recovering a single node
 # while another is knowingly offline). Off by default: a partial discovery
@@ -152,22 +166,19 @@ def get_inventory_expected_nodes():
         expected[h] = {"role": "worker", "current_ip": v.get("ansible_host"), "vmid": v.get("k3s_node_id")}
     return expected
 
-def is_node_address(ip):
-    """True if `ip` can plausibly be a node's own address on the management subnet.
+def is_virtual_iface(name):
+    """True for cluster-managed interfaces that carry service addresses, not host leases."""
+    return name.startswith(VIRTUAL_IFACE_PREFIXES)
 
-    Excludes the gateway and the MetalLB VIP range: a LoadBalancer VIP is
-    answerable on whichever node currently announces it, so treating one as a
-    node address collapses the whole inventory onto a single host.
-    """
+def is_node_address(ip):
+    """True if `ip` can plausibly be a node's own address on the management subnet."""
     if not ip.startswith(f"{SUBNET_PREFIX}."):
         return False
     try:
         last_octet = int(ip.rsplit(".", 1)[1])
     except (ValueError, IndexError):
         return False
-    if last_octet == 1:
-        return False
-    return not (LB_POOL_START <= last_octet <= LB_POOL_END)
+    return last_octet != 1
 
 def query_pve_agent_ips():
     if not PVE_API_TOKEN:
@@ -204,6 +215,8 @@ def query_pve_agent_ips():
                     # must never overwrite an address already resolved for this VM.
                     node_ip = None
                     for iface in ifaces:
+                        if is_virtual_iface(iface.get("name", "")):
+                            continue
                         for ip_entry in iface.get("ip-addresses", []):
                             if is_node_address(ip_entry.get("ip-address", "")):
                                 node_ip = ip_entry.get("ip-address", "")
@@ -229,8 +242,8 @@ def check_port_22(ip):
         return None
 
 def scan_live_ips():
-    # A node announcing a MetalLB VIP also answers SSH on it and reports its own
-    # hostname, so scanning that range maps real nodes onto floating addresses.
+    # The whole subnet is in scope: the DHCP scope overlaps the MetalLB pool, so
+    # real nodes do hold leases inside it and cannot be skipped by range.
     ips = [f"{SUBNET_PREFIX}.{i}" for i in range(2, 255) if is_node_address(f"{SUBNET_PREFIX}.{i}")]
     live = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
@@ -325,7 +338,10 @@ def main():
             with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
                 results = executor.map(ssh_identify_node, live_ips)
                 for name, ip in results:
-                    if name and name in expected:
+                    # Never overwrite a guest-agent result: a node also answers
+                    # SSH on any service address IPVS has bound locally, so the
+                    # scan can reach a real host at an address that isn't its own.
+                    if name and name in expected and name not in discovered:
                         discovered[name] = ip
 
         if len(discovered) >= len(expected):
