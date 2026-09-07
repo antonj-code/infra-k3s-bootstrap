@@ -224,6 +224,23 @@ resource "proxmox_virtual_environment_vm" "k3s_workers" {
     file_format  = "raw"
   }
 
+  # Tertiary Dedicated Storage Disk (60GB) for the K3s container runtime.
+  # The CIS template partitions /var as a 5GB LV, which is correct for a
+  # hardened server but far too small for containerd's image store - a
+  # single monitoring stack exhausts it and the kubelet starts evicting
+  # pods under ephemeral-storage pressure. This disk carries both
+  # /var/lib/rancher (images, snapshots) and /var/lib/kubelet (emptyDir,
+  # pod ephemeral storage) so neither competes with the OS volume.
+  disk {
+    datastore_id = var.storage_datastore
+    interface    = "scsi2"
+    iothread     = true
+    discard      = "on"
+    backup       = false
+    size         = var.worker_config.runtime_disk_size
+    file_format  = "raw"
+  }
+
   initialization {
     ip_config {
       ipv4 {

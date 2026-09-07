@@ -4,3 +4,22 @@ k3s_server_location: "/var/lib/rancher/k3s"
 k3s_worker_data_disk: "/dev/sdb"
 k3s_worker_data_mount: "/mnt/storage-data01"
 
+# Declared sizes (GiB) of the two dedicated data disks. Both are blank and
+# unpartitioned on a fresh build, so "the unpartitioned one" is no longer
+# enough to identify either - size is the only intrinsic marker that tells
+# them apart without trusting sd-letter ordering. These MUST stay in sync
+# with worker_config.data_disk_size / worker_config.runtime_disk_size in
+# the environment's terraform.tfvars.
+k3s_worker_data_disk_size_gb: 50
+k3s_worker_runtime_disk_size_gb: 60
+
+# Container runtime storage. One filesystem holds both the containerd image
+# store and kubelet's ephemeral storage, bind-mounted to the paths k3s and
+# kubelet expect. Sharing one pool avoids having to guess a split between
+# them; the CIS template's 5GB /var LV is too small for either.
+k3s_worker_runtime_mount: "/mnt/k8s-data"
+k3s_worker_runtime_binds:
+  - subdir: rancher
+    path: /var/lib/rancher
+  - subdir: kubelet
+    path: /var/lib/kubelet

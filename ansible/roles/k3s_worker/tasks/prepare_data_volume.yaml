@@ -1,0 +1,78 @@
+---
+# Format (when blank) and persistently mount one dedicated data disk.
+# Expects `volume`: { device, mount, purpose }.
+
+- name: Check if {{ volume.mount }} is already mounted
+  ansible.builtin.command:
+    cmd: mountpoint -q {{ volume.mount }}
+  register: volume_mount_check
+  failed_when: false
+  changed_when: false
+
+- name: Check if {{ volume.device }} already has a filesystem
+  ansible.builtin.command:
+    cmd: blkid -c /dev/null -o value -s TYPE {{ volume.device }}
+  register: volume_fs_check
+  failed_when: false
+  changed_when: false
+  when: volume_mount_check.rc != 0
+
+- name: Create XFS filesystem on {{ volume.device }} if unformatted and not mounted
+  # udevadm settle in the caller only covers the gap before this include
+  # starts - a delayed udev "change" event can still reclaim the device
+  # during the checks above or between retries here, so settle again
+  # immediately before each mkfs attempt rather than relying on one upfront
+  # settle call to cover the whole retry window. The retry budget is wider
+  # than a single-node redeploy needs because a full cluster rebuild
+  # reboots/cold-plugs every node's disks at once, so host-level contention
+  # can stretch out how long that re-probe takes. On failure, dump what
+  # actually has the device open so a recurrence points at the real holder.
+  ansible.builtin.shell: |
+    udevadm settle --timeout=30
+    if mkfs.xfs -f {{ volume.device }}; then
+      exit 0
+    fi
+    echo "mkfs failed - dumping diagnostics on what holds {{ volume.device }} open:" >&2
+    lsblk {{ volume.device }} >&2 || true
+    fuser -vm {{ volume.device }} >&2 || true
+    exit 1
+  register: volume_format_result
+  until: volume_format_result is succeeded
+  retries: 10
+  delay: 10
+  changed_when: volume_format_result.rc == 0
+  when: volume_mount_check.rc != 0 and (volume_fs_check.stdout | default('')) == ""
+
+- name: Ensure {{ volume.mount }} directory exists
+  ansible.builtin.file:
+    path: "{{ volume.mount }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Read filesystem UUID of {{ volume.device }} for stable fstab persistence
+  ansible.builtin.command:
+    cmd: blkid -c /dev/null -s UUID -o value {{ volume.device }}
+  register: volume_uuid
+  changed_when: false
+
+- name: Fail if {{ volume.device }} reports no filesystem UUID
+  ansible.builtin.assert:
+    that:
+      - volume_uuid.stdout | length > 0
+    fail_msg: >-
+      Could not read a filesystem UUID from {{ volume.device }} ({{ volume.purpose }}).
+      Refusing to fall back to a device-path fstab entry - sd-letters are not
+      stable on this platform and could point at the wrong disk after a reboot.
+
+# Mount by UUID, not device path - sd-letters aren't stable across reboots
+# on this platform (see the discovery comment in main.yaml), so a device-path
+# fstab entry could silently point at the wrong disk after some future reboot.
+- name: Mount {{ volume.device }} at {{ volume.mount }} persistently in /etc/fstab
+  ansible.posix.mount:
+    path: "{{ volume.mount }}"
+    src: "UUID={{ volume_uuid.stdout }}"
+    fstype: xfs
+    opts: defaults,noatime,nofail,x-systemd.device-timeout=30
+    state: mounted

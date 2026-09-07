@@ -30,16 +30,16 @@
     path: /var/lib/rancher/k3s/agent/client-ca.crt
   register: k3s_agent_already_initialized
 
-# --- Step 1: Format & Mount Secondary 50GB Storage Disk (XFS on {{ k3s_worker_data_mount | default('/mnt/storage-data01') }}) ---
+# --- Step 1: Format & Mount the Dedicated Data Disks (Longhorn + Container Runtime) ---
 - name: Check if a secondary disk exists at all
   ansible.builtin.stat:
     path: "{{ k3s_worker_data_disk | default('/dev/sdb') }}"
   register: sdb_disk_stat
 
-- name: Prepare and mount secondary 50GB storage volume with XFS
+- name: Prepare and mount the dedicated data volumes with XFS
   when: sdb_disk_stat.stat.exists and not (k3s_agent_already_initialized.stat.exists | default(false))
   block:
-    - name: Wait for udev to finish processing secondary disk before formatting
+    - name: Wait for udev to finish processing data disks before formatting
       ansible.builtin.command:
         cmd: udevadm settle --timeout=30
       changed_when: false
@@ -48,106 +48,76 @@
     # /dev/sdb is not a reliable name for "the data disk". Linux assigns
     # sd-letters in SCSI discovery-completion order, and AlmaLinux/RHEL's
     # default async SCSI scan means scsi0 (the OS root disk, cloned from
-    # the CIS template) and scsi1 (the blank data disk) can finish
-    # probing in either order across boots - what we called "Device or
-    # resource busy" was frequently this task pointed at the mounted,
-    # LVM-backed root disk, not a udev timing gap; only the disk being
-    # too busy to format kept that from being destructive. Identify the
-    # real target by shape instead: the root disk always has partitions
-    # (boot + LVM), the blank data disk never does. Refuse to guess if
-    # that's not unambiguous.
-    - name: Identify the unpartitioned secondary disk (the actual data disk, not necessarily /dev/sdb)
+    # the CIS template) and the blank data disks can finish probing in any
+    # order across boots - what we called "Device or resource busy" was
+    # frequently this task pointed at the mounted, LVM-backed root disk,
+    # not a udev timing gap; only the disk being too busy to format kept
+    # that from being destructive. Identify by shape instead: the root disk
+    # always has partitions (boot + LVM), the blank data disks never do.
+    #
+    # Shape alone stopped being sufficient once workers gained a second
+    # blank disk for the container runtime - both are unpartitioned on a
+    # fresh build. Size is the only intrinsic marker left that doesn't
+    # trust sd-letter ordering, so the two are told apart by their declared
+    # capacity (a 1GiB tolerance absorbs filesystem/reporting rounding).
+    # Refuse to guess if that isn't unambiguous.
+    - name: Identify the unpartitioned disk matching the Longhorn data disk size
       ansible.builtin.shell: |
         for d in /dev/sd?; do
-          if [ "$(lsblk -nlo TYPE "$d" | grep -c '^part$')" -eq 0 ]; then
+          [ -b "$d" ] || continue
+          [ "$(lsblk -nlo TYPE "$d" | grep -c '^part$')" -eq 0 ] || continue
+          gib=$(( $(lsblk -bndo SIZE "$d") / 1073741824 ))
+          if [ "$gib" -ge {{ k3s_worker_data_disk_size_gb | int - 1 }} ] && [ "$gib" -le {{ k3s_worker_data_disk_size_gb | int + 1 }} ]; then
             echo "$d"
           fi
         done
-      register: data_disk_candidates
+      register: longhorn_disk_candidates
       changed_when: false
 
-    - name: Fail if the data disk can't be unambiguously identified
+    - name: Identify the unpartitioned disk matching the container runtime disk size
+      ansible.builtin.shell: |
+        for d in /dev/sd?; do
+          [ -b "$d" ] || continue
+          [ "$(lsblk -nlo TYPE "$d" | grep -c '^part$')" -eq 0 ] || continue
+          gib=$(( $(lsblk -bndo SIZE "$d") / 1073741824 ))
+          if [ "$gib" -ge {{ k3s_worker_runtime_disk_size_gb | int - 1 }} ] && [ "$gib" -le {{ k3s_worker_runtime_disk_size_gb | int + 1 }} ]; then
+            echo "$d"
+          fi
+        done
+      register: runtime_disk_candidates
+      changed_when: false
+
+    - name: Fail if either data disk can't be unambiguously identified
       ansible.builtin.assert:
         that:
-          - data_disk_candidates.stdout_lines | length == 1
+          - longhorn_disk_candidates.stdout_lines | length == 1
+          - runtime_disk_candidates.stdout_lines | length == 1
+          - longhorn_disk_candidates.stdout_lines[0] != runtime_disk_candidates.stdout_lines[0]
         fail_msg: >-
-          Expected exactly one unpartitioned disk to identify as the
-          secondary data disk, found {{ data_disk_candidates.stdout_lines | length }}:
-          {{ data_disk_candidates.stdout_lines }}. Refusing to guess which
-          one to format.
+          Expected exactly one unpartitioned {{ k3s_worker_data_disk_size_gb }}GiB disk
+          (Longhorn) and one {{ k3s_worker_runtime_disk_size_gb }}GiB disk (container
+          runtime). Found Longhorn candidates {{ longhorn_disk_candidates.stdout_lines }}
+          and runtime candidates {{ runtime_disk_candidates.stdout_lines }}. Refusing to
+          guess which one to format. If the two disks were provisioned at the same size,
+          k3s_worker_data_disk_size_gb / k3s_worker_runtime_disk_size_gb no longer
+          distinguish them and both must be re-checked against terraform.tfvars.
 
-    - name: Set resolved data disk device fact
+    - name: Build the data volume plan from the resolved devices
       ansible.builtin.set_fact:
-        k3s_worker_resolved_disk: "{{ data_disk_candidates.stdout_lines[0] }}"
+        k3s_worker_volume_plan:
+          - device: "{{ longhorn_disk_candidates.stdout_lines[0] }}"
+            mount: "{{ k3s_worker_data_mount | default('/mnt/storage-data01') }}"
+            purpose: Longhorn replica storage
+          - device: "{{ runtime_disk_candidates.stdout_lines[0] }}"
+            mount: "{{ k3s_worker_runtime_mount | default('/mnt/k8s-data') }}"
+            purpose: K3s container runtime storage
 
-    - name: Check if secondary disk is already mounted
-      ansible.builtin.command:
-        cmd: mountpoint -q {{ k3s_worker_data_mount | default('/mnt/storage-data01') }}
-      register: sdb_mount_check
-      failed_when: false
-      changed_when: false
-
-    - name: Check if secondary disk already has a filesystem
-      ansible.builtin.command:
-        cmd: blkid -c /dev/null -o value -s TYPE {{ k3s_worker_resolved_disk }}
-      register: sdb_fs_check
-      failed_when: false
-      changed_when: false
-      when: sdb_mount_check.rc != 0
-
-    - name: Create XFS filesystem on secondary disk if unformatted and not mounted
-      # udevadm settle above only covers the gap before this block starts - a
-      # delayed udev "change" event can still reclaim the device during the
-      # mount/fs checks above or between retries here, so settle again
-      # immediately before each mkfs attempt rather than relying on one
-      # upfront settle call to cover the whole retry window. The retry
-      # budget is wider than a single-node redeploy needs because a full
-      # cluster rebuild reboots/cold-plugs every node's disk at once, so
-      # host-level contention can stretch out how long that re-probe takes.
-      # On failure, dump what actually has the device open so a recurrence
-      # points at the real holder instead of another guess.
-      ansible.builtin.shell: |
-        udevadm settle --timeout=30
-        if mkfs.xfs -f {{ k3s_worker_resolved_disk }}; then
-          exit 0
-        fi
-        echo "mkfs failed - dumping diagnostics on what holds {{ k3s_worker_resolved_disk }} open:" >&2
-        lsblk {{ k3s_worker_resolved_disk }} >&2 || true
-        fuser -vm {{ k3s_worker_resolved_disk }} >&2 || true
-        exit 1
-      register: sdb_format_result
-      until: sdb_format_result is succeeded
-      retries: 10
-      delay: 10
-      changed_when: sdb_format_result.rc == 0
-      when: sdb_mount_check.rc != 0 and (sdb_fs_check.stdout | default('')) == ""
-
-
-    - name: Ensure {{ k3s_worker_data_mount | default('/mnt/storage-data01') }} directory exists
-
-      ansible.builtin.file:
-        path: "{{ k3s_worker_data_mount | default('/mnt/storage-data01') }}"
-        state: directory
-        owner: root
-        group: root
-        mode: '0755'
-
-    - name: Read filesystem UUID of the resolved data disk for stable fstab persistence
-      ansible.builtin.command:
-        cmd: blkid -c /dev/null -s UUID -o value {{ k3s_worker_resolved_disk }}
-      register: sdb_uuid
-      changed_when: false
-
-    # Mount by UUID, not device path - sd-letters aren't stable across
-    # reboots on this platform (see above), so a device-path fstab entry
-    # could silently point at the wrong disk after some future reboot.
-    - name: Mount secondary disk to {{ k3s_worker_data_mount | default('/mnt/storage-data01') }} persistently in /etc/fstab
-      ansible.posix.mount:
-        path: "{{ k3s_worker_data_mount | default('/mnt/storage-data01') }}"
-        src: "UUID={{ sdb_uuid.stdout }}"
-        fstype: xfs
-        opts: defaults,noatime,nofail,x-systemd.device-timeout=30
-        state: mounted
+    - name: Format and persistently mount each dedicated data volume
+      ansible.builtin.include_tasks: prepare_data_volume.yaml
+      loop: "{{ k3s_worker_volume_plan }}"
+      loop_control:
+        loop_var: volume
+        label: "{{ volume.device }} -> {{ volume.mount }} ({{ volume.purpose }})"
 
     - name: Ensure dedicated Longhorn storage directory exists on secondary disk
       ansible.builtin.file:
@@ -156,6 +126,135 @@
         owner: root
         group: root
         mode: '0755'
+
+    # k3s and kubelet both hardcode their paths under the CIS template's 5GB
+    # /var LV, and one filesystem can only be mounted at one path - so the
+    # runtime disk is mounted once and its subdirectories are bind-mounted
+    # onto the paths each expects. Both then draw from the same 60GB pool
+    # instead of needing a reserved slice apiece, which matters because the
+    # image store's growth is driven by whatever gets scheduled.
+    - name: Survey the runtime bind targets for pre-existing content
+      ansible.builtin.shell: |
+        p="{{ item.path }}"
+        if mountpoint -q "$p"; then
+          echo mounted
+        elif [ -d "$p" ] && [ -n "$(ls -A "$p" 2>/dev/null)" ]; then
+          echo populated
+        else
+          echo clear
+        fi
+      register: runtime_bind_survey
+      changed_when: false
+      loop: "{{ k3s_worker_runtime_binds }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Fail if a runtime bind target already holds data
+      # Bind-mounting over a populated directory hides its contents rather
+      # than moving them: the node would re-pull every image while the old
+      # copy still consumed the /var LV this disk exists to relieve, and the
+      # orphaned data would be invisible to df at that path. Migrating an
+      # in-place node is a separate, deliberate operation - fail closed here
+      # rather than silently stranding gigabytes.
+      ansible.builtin.assert:
+        that:
+          - item.stdout != 'populated'
+        fail_msg: >-
+          {{ item.item.path }} already contains data and is not a mount point.
+          Bind-mounting over it would orphan that data on the /var LV. Migrate it
+          onto {{ k3s_worker_runtime_mount | default('/mnt/k8s-data') }} manually
+          (stop k3s-agent, rsync, then swap the mount), or rebuild this node.
+      loop: "{{ runtime_bind_survey.results }}"
+      loop_control:
+        label: "{{ item.item.path }}"
+
+    - name: Ensure runtime subdirectories exist on the dedicated disk
+      ansible.builtin.file:
+        path: "{{ k3s_worker_runtime_mount | default('/mnt/k8s-data') }}/{{ item.subdir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop: "{{ k3s_worker_runtime_binds }}"
+      loop_control:
+        label: "{{ item.subdir }}"
+
+    # SELinux contexts live on inodes, not paths. restorecon on the bind
+    # target labels them correctly now, but the policy still considers these
+    # inodes to live at {{ k3s_worker_runtime_mount | default('/mnt/k8s-data') }},
+    # so any relabel that walks the real filesystem - fixfiles, a /.autorelabel
+    # boot after CIS policy remediation, or a stray restorecon -R /mnt - resets
+    # them to mnt_t and k3s fails to start on the next boot. Declaring an
+    # equivalency makes the policy compute the right contexts from either path,
+    # so the labelling survives a relabel instead of silently reverting.
+    - name: Declare SELinux file context equivalency for the relocated runtime directories
+      ansible.builtin.shell: |
+        src="{{ k3s_worker_runtime_mount | default('/mnt/k8s-data') }}/{{ item.subdir }}"
+        tgt="{{ item.path }}"
+        if semanage fcontext -l -C 2>/dev/null | grep -qE "^${src}( |=)" ; then
+          echo unchanged
+          exit 0
+        fi
+        semanage fcontext -a -e "$tgt" "$src" || semanage fcontext -m -e "$tgt" "$src"
+        echo changed
+      register: runtime_fcontext_equiv
+      changed_when: "'changed' in runtime_fcontext_equiv.stdout"
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - (ansible_facts['selinux']['status'] | default('disabled')) != 'disabled'
+      loop: "{{ k3s_worker_runtime_binds }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Apply the equivalent contexts to the backing directories on the runtime disk
+      ansible.builtin.command:
+        cmd: restorecon -R {{ k3s_worker_runtime_mount | default('/mnt/k8s-data') }}
+      when:
+        - ansible_facts['os_family'] == 'RedHat'
+        - (ansible_facts['selinux']['status'] | default('disabled')) != 'disabled'
+      register: runtime_backing_restorecon
+      failed_when: runtime_backing_restorecon.rc != 0 and 'No such file' not in runtime_backing_restorecon.stderr
+      changed_when: false
+
+    - name: Ensure runtime bind target directories exist
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop: "{{ k3s_worker_runtime_binds }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    # These entries must land in fstab after the runtime disk's own UUID
+    # entry, which the include above already wrote - ansible.posix.mount
+    # appends, so ordering follows task order here.
+    - name: Bind-mount the runtime directories onto the dedicated disk persistently
+      ansible.posix.mount:
+        path: "{{ item.path }}"
+        src: "{{ k3s_worker_runtime_mount | default('/mnt/k8s-data') }}/{{ item.subdir }}"
+        fstype: none
+        opts: bind,nofail
+        state: mounted
+      loop: "{{ k3s_worker_runtime_binds }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    # A bind mount presents the *underlying* directory's SELinux context at
+    # the target, not the one k3s and kubelet expect at their own paths.
+    # Without relabelling, the agent fails to start with permission errors
+    # that don't obviously read as SELinux denials.
+    - name: Restore SELinux file contexts on the relocated runtime directories
+      ansible.builtin.command:
+        cmd: restorecon -R {{ item.path }}
+      loop: "{{ k3s_worker_runtime_binds }}"
+      loop_control:
+        label: "{{ item.path }}"
+      when: ansible_facts['os_family'] == 'RedHat'
+      register: runtime_restorecon
+      failed_when: runtime_restorecon.rc != 0 and 'No such file' not in runtime_restorecon.stderr
+      changed_when: false
 
 # --- Step 1.5: Stale Agent State Cleanup on Unclean Worker Nodes ---
 - name: Check if k3s agent is already initialized

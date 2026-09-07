@@ -202,18 +202,20 @@ variable "control_plane_config" {
 }
 
 variable "worker_config" {
-  description = "Hardware resource allocation for K3s Worker VMs (including secondary 50GB data disk for Longhorn)"
+  description = "Hardware resource allocation for K3s Worker VMs (secondary 50GB data disk for Longhorn, tertiary 60GB disk for the container runtime)"
   type = object({
-    cores          = number
-    memory         = number
-    disk_size      = number
-    data_disk_size = number
+    cores             = number
+    memory            = number
+    disk_size         = number
+    data_disk_size    = number
+    runtime_disk_size = number
   })
   default = {
-    cores          = 4
-    memory         = 4096
-    disk_size      = 32
-    data_disk_size = 50
+    cores             = 4
+    memory            = 4096
+    disk_size         = 32
+    data_disk_size    = 50
+    runtime_disk_size = 60
   }
 }
 
