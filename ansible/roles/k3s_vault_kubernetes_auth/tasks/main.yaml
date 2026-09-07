@@ -1,0 +1,173 @@
+---
+# ==============================================================================
+# Register this cluster with Vault's Kubernetes auth method
+# ==============================================================================
+# In-cluster apps (via External Secrets Operator) authenticate to Vault using
+# Vault's "kubernetes" auth method, which needs to be enabled and pointed at
+# this specific cluster's API server before any SecretStore can log in.
+#
+# The vault-auth-delegator ServiceAccount/ClusterRoleBinding/token Secret are
+# also declared in infra-k3s-gitops (infrastructure/base/vault-auth-delegator)
+# so Flux keeps owning and enforcing them long-term. They're applied here too,
+# imperatively, because this task runs *before* stage:flux:bootstrap in the
+# pipeline - waiting for Flux to reconcile them first would mean this step
+# either races Flux or has to poll for it. Applying the identical manifest
+# imperatively first means Flux just adopts a matching object later; no drift,
+# no waiting.
+#
+# This whole role is best-effort: a cluster is still fully functional without
+# it, so a missing VAULT_TOKEN skips it with a warning rather than failing the
+# entire provisioning run.
+
+- name: Skip Vault Kubernetes-auth registration if VAULT_TOKEN is not set
+  ansible.builtin.debug:
+    msg: >-
+      VAULT_TOKEN is not set in the environment - skipping Vault Kubernetes
+      auth registration. In-cluster apps that need Vault secrets (via
+      External Secrets Operator) won't be able to authenticate until this is
+      run manually with VAULT_TOKEN exported.
+  when: (lookup('env', 'VAULT_TOKEN') | default('', true)) | length == 0
+
+- when: (lookup('env', 'VAULT_TOKEN') | default('', true)) | length > 0
+  block:
+    # --------------------------------------------------------------------
+    # 1. Ensure the reviewer ServiceAccount exists (idempotent apply)
+    # --------------------------------------------------------------------
+    - name: Apply vault-auth-delegator RBAC (ServiceAccount, token Secret, ClusterRoleBinding)
+      ansible.builtin.command:
+        cmd: /usr/local/bin/k3s kubectl apply -f -
+        stdin: |
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: vault-auth-delegator
+            namespace: kube-system
+          ---
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: vault-auth-delegator
+            namespace: kube-system
+            annotations:
+              kubernetes.io/service-account.name: vault-auth-delegator
+          type: kubernetes.io/service-account-token
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata:
+            name: vault-auth-delegator
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: system:auth-delegator
+          subjects:
+            - kind: ServiceAccount
+              name: vault-auth-delegator
+              namespace: kube-system
+      register: vault_auth_delegator_apply
+      changed_when: "'unchanged' not in vault_auth_delegator_apply.stdout"
+
+    # A freshly-created ServiceAccount token Secret can take a moment for the
+    # API server to populate .data.token - poll rather than assume it's
+    # already there immediately after apply.
+    - name: Wait for the reviewer ServiceAccount token to be populated
+      ansible.builtin.command:
+        cmd: /usr/local/bin/k3s kubectl -n kube-system get secret vault-auth-delegator -o jsonpath={.data.token}
+      register: vault_reviewer_token_check
+      until: vault_reviewer_token_check.stdout | length > 0
+      retries: 10
+      delay: 3
+      changed_when: false
+      no_log: true
+
+    - name: Set reviewer JWT fact
+      ansible.builtin.set_fact:
+        vault_reviewer_jwt: "{{ vault_reviewer_token_check.stdout | b64decode }}"
+      no_log: true
+
+    # --------------------------------------------------------------------
+    # 2. Cluster CA cert (needed by Vault to validate TokenReview calls)
+    # --------------------------------------------------------------------
+    - name: Read cluster CA certificate
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/k3s kubectl config view --raw --minify --flatten
+          -o jsonpath={.clusters[0].cluster.certificate-authority-data}
+      register: vault_cluster_ca_check
+      changed_when: false
+
+    - name: Set cluster CA fact
+      ansible.builtin.set_fact:
+        vault_cluster_ca: "{{ vault_cluster_ca_check.stdout | b64decode }}"
+
+    - name: Assert reviewer JWT and cluster CA were resolved
+      ansible.builtin.assert:
+        that:
+          - (vault_reviewer_jwt | default('') | length) > 0
+          - (vault_cluster_ca | default('') | length) > 0
+        fail_msg: >-
+          Could not resolve the vault-auth-delegator reviewer token or the
+          cluster CA certificate - Vault Kubernetes auth cannot be configured.
+
+    # --------------------------------------------------------------------
+    # 3. Enable Vault's "kubernetes" auth method (idempotent)
+    # --------------------------------------------------------------------
+    - name: Check whether the kubernetes auth method is already enabled
+      ansible.builtin.uri:
+        url: "{{ lookup('env', 'VAULT_ADDR') | default('https://192.168.0.40:8200', true) }}/v1/sys/auth"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+        validate_certs: false
+        status_code: [200]
+      register: vault_auth_mounts
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Enable the kubernetes auth method
+      ansible.builtin.uri:
+        url: "{{ lookup('env', 'VAULT_ADDR') | default('https://192.168.0.40:8200', true) }}/v1/sys/auth/kubernetes"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+        body_format: json
+        body:
+          type: kubernetes
+        validate_certs: false
+        status_code: [204]
+      when: "'kubernetes/' not in vault_auth_mounts.json"
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    # --------------------------------------------------------------------
+    # 4. Point the auth method at this cluster (safe to always re-run --
+    #    keeps the reviewer JWT and CA current if either ever rotates)
+    # --------------------------------------------------------------------
+    - name: Configure the kubernetes auth method for this cluster
+      ansible.builtin.uri:
+        url: "{{ lookup('env', 'VAULT_ADDR') | default('https://192.168.0.40:8200', true) }}/v1/auth/kubernetes/config"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+        body_format: json
+        body:
+          token_reviewer_jwt: "{{ vault_reviewer_jwt }}"
+          kubernetes_host: "{{ k3s_api_endpoint }}"
+          kubernetes_ca_cert: "{{ vault_cluster_ca }}"
+        validate_certs: false
+        status_code: [204]
+      delegate_to: localhost
+      become: false
+      run_once: true
+      no_log: true
+
+    - name: Report Vault Kubernetes auth registration result
+      ansible.builtin.debug:
+        msg: >-
+          Vault kubernetes auth method configured for {{ k3s_api_endpoint }}
+          (cluster_environment={{ cluster_environment | default('stage') }}).
+          Per-app policies/roles/secrets are managed separately via
+          scripts/vault_seed_apps.sh.
+      run_once: true
