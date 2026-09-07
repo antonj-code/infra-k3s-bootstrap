@@ -97,6 +97,10 @@
       register: kube_vip_status
       changed_when: false
 
+    - name: Display kube-vip HA Status
+      ansible.builtin.debug:
+        msg: "{{ kube_vip_status.stdout_lines }}"
+
 # --- Step 6: Register Cluster with Vault Kubernetes Auth ---
 # Runs before stage:flux:bootstrap so the "kubernetes" auth method is already
 # usable the moment Flux starts reconciling anything (e.g. External Secrets
@@ -107,8 +111,4 @@
   become: true
   roles:
     - role: k3s_vault_kubernetes_auth
-
-    - name: Display kube-vip HA Status
-      ansible.builtin.debug:
-        msg: "{{ kube_vip_status.stdout_lines }}"
 
