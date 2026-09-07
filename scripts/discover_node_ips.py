@@ -56,6 +56,11 @@ SSH_USER = os.environ.get("ANSIBLE_USER", "almalinux")
 # without excluding them every node gets "discovered" as the same VIP.
 LB_POOL_START = int(os.environ.get("LB_POOL_START", "50"))
 LB_POOL_END = int(os.environ.get("LB_POOL_END", "99"))
+
+# Escape hatch for deliberately degraded runs (e.g. recovering a single node
+# while another is knowingly offline). Off by default: a partial discovery
+# normally means something is wrong, not that it's safe to carry on.
+ALLOW_PARTIAL_DISCOVERY = os.environ.get("ALLOW_PARTIAL_DISCOVERY", "").lower() in ("1", "true", "yes")
 if ENV == "prod":
     PVE_ENDPOINT = (
         os.environ.get("TF_VAR_pve_host_1_endpoint") or
@@ -319,6 +324,35 @@ def main():
             time.sleep(10)
 
     print(f"\n[INFO] Final discovery count: {len(discovered)} of {len(expected)} expected nodes.")
+
+    # A host that wasn't discovered keeps whatever ansible_host is committed in
+    # hosts.yaml. Those committed values are stale placeholders - stage and prod
+    # currently carry identical addresses - so proceeding would silently target
+    # whichever machine happens to hold that IP today, potentially in the other
+    # environment. Refuse to run rather than configure the wrong host.
+    missing = sorted(h for h in expected if h not in discovered)
+    if missing:
+        print(f"\n[ERROR] Discovery failed for {len(missing)} of {len(expected)} expected nodes:")
+        for host in missing:
+            stale_ip = expected[host].get("current_ip") or "unset"
+            print(f"  - {host} (role={expected[host].get('role')}, "
+                  f"stale inventory value: {stale_ip})")
+        if not ALLOW_PARTIAL_DISCOVERY:
+            print(
+                "\n        The inventory was NOT updated. Running Ansible now would use the\n"
+                "        stale addresses above, which are not guaranteed to belong to this\n"
+                f"        environment ({ENV}).\n\n"
+                "        Check that the VMs are running and their guest agents are up, then\n"
+                "        re-run. To proceed anyway with only the nodes that were found,\n"
+                "        set ALLOW_PARTIAL_DISCOVERY=true."
+            )
+            sys.exit(1)
+        print(
+            "\n[WARN] ALLOW_PARTIAL_DISCOVERY=true - updating inventory with the nodes\n"
+            "       that were found. The hosts listed above keep their stale committed\n"
+            "       addresses and may not belong to this environment."
+        )
+
     update_inventory_and_hosts(discovered)
 
 if __name__ == "__main__":
