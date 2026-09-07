@@ -61,6 +61,18 @@ LB_POOL_END = int(os.environ.get("LB_POOL_END", "99"))
 # while another is knowingly offline). Off by default: a partial discovery
 # normally means something is wrong, not that it's safe to carry on.
 ALLOW_PARTIAL_DISCOVERY = os.environ.get("ALLOW_PARTIAL_DISCOVERY", "").lower() in ("1", "true", "yes")
+
+# How many discovery passes before giving up. Each pass costs roughly 25s when
+# a node is still missing (subnet scan + SSH challenge + the 10s backoff), so
+# the default is ~2.5 minutes - fine for a normal run where every VM is already
+# up. Callers that have just booted a VM (scripts/redeploy_node.sh) raise this,
+# since a fresh clone needs to finish cloud-init and start qemu-guest-agent
+# before it can be found at all.
+try:
+    MAX_DISCOVERY_ATTEMPTS = max(1, int(os.environ.get("DISCOVERY_MAX_ATTEMPTS", "6")))
+except ValueError:
+    print("[WARN] DISCOVERY_MAX_ATTEMPTS is not an integer - falling back to 6.")
+    MAX_DISCOVERY_ATTEMPTS = 6
 if ENV == "prod":
     PVE_ENDPOINT = (
         os.environ.get("TF_VAR_pve_host_1_endpoint") or
@@ -296,8 +308,8 @@ def main():
     print(f"[INFO] Expected nodes ({len(expected)}): {list(expected.keys())}")
     discovered = {}
     
-    # Retry polling loop up to 6 iterations (60 seconds)
-    max_attempts = 6
+    # Retry polling loop (see MAX_DISCOVERY_ATTEMPTS)
+    max_attempts = MAX_DISCOVERY_ATTEMPTS
     for attempt in range(1, max_attempts + 1):
         # 1. Proxmox Agent query
         pve_found = query_pve_agent_ips()

@@ -139,8 +139,14 @@ if [[ -n "${TEMPLATE_VM_ID_OVERRIDE:-}" ]]; then
 fi
 terraform apply "${TF_APPLY_ARGS[@]}"
 
-# Discover and update new DHCP IP address
-bash "${REPO_ROOT}/scripts/discover_node_ips.sh" "${ENV}"
+# Discover and update new DHCP IP address.
+# terraform -replace gives the rebuilt VM a new MAC and therefore a new DHCP
+# lease, so its committed inventory address is stale and discovery has to find
+# it before Ansible can target it. Allow longer than the default here: the VM
+# was booted seconds ago and still has to finish cloud-init and start
+# qemu-guest-agent before it can be discovered at all.
+DISCOVERY_MAX_ATTEMPTS="${DISCOVERY_MAX_ATTEMPTS:-12}" \
+    bash "${REPO_ROOT}/scripts/discover_node_ips.sh" "${ENV}"
 
 # --- Step 4: Run Ansible Re-Hardening & Cluster Rejoin ---
 echo "[STEP 3/4] Hardening OS and rejoining ${NODE_NAME} to K3s cluster..."
