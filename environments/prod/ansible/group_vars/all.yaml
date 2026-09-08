@@ -54,7 +54,6 @@ vault_bootstrap_secret_path: "secret/data/k3s-prod/bootstrap"
 
 # Disabled Built-in Services
 k3s_disable_components:
-  - "traefik"
   - "servicelb"
   - "helm-controller"
 
