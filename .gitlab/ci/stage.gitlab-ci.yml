@@ -311,6 +311,15 @@ stage:flux:bootstrap:
         -backend-config="unlock_method=DELETE" \
         -backend-config="retry_wait_min=5" \
         -backend-config="skip_cert_verification=true"
+    # The rolling-upgrade and recover-node pipelines both skip terraform:apply,
+    # so they fall back to whichever inventory is committed to git - and that
+    # copy is stale the moment a rebuild regenerates the random node-name
+    # suffixes. Rewrite the generated inventory from Terraform state first.
+    # -target pulls in the target's dependencies, but every VM attribute this
+    # module manages is under lifecycle.ignore_changes, so an existing VM
+    # cannot produce a diff here; only a VM genuinely absent from Proxmox
+    # would be recreated, which is what a recovery run would do anyway.
+    - terraform apply -auto-approve -input=false -target=module.k3s_nodes.local_file.ansible_inventory
 
 stage:recover:node:
   extends: .stage_node_ops
