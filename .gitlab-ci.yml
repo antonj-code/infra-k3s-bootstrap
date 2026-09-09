@@ -41,11 +41,23 @@ variables:
     options:
       - "deploy"
       - "recover-node"
-    description: "Action to execute: 'deploy' (full cluster rollout) or 'recover-node' (single VM rebuild & rejoin)"
+      - "rolling-upgrade"
+    description: "Action to execute: 'deploy' (full cluster rollout), 'recover-node' (single VM rebuild & rejoin) or 'rolling-upgrade' (sequential whole-cluster repave / in-place update)"
 
   NODE_NAME:
     value: ""
     description: "Node hostname to rebuild during 'recover-node' (e.g. k3s-wk-p-g7h8, k3s-cp-p-a1b2, k3s-wk-s-g7h8)"
+
+  UPGRADE_MODE:
+    value: "repave"
+    options:
+      - "repave"
+      - "in-place"
+    description: "Rolling upgrade strategy: 'repave' (rebuild each VM from the template) or 'in-place' (OS/K3s update on the existing VM)"
+
+  TEMPLATE_ID:
+    value: ""
+    description: "Proxmox template VM ID to repave onto during 'rolling-upgrade' (e.g. 1000). Leave blank to use template_registry/template_version. Ignored by 'in-place'."
 
 stages:
   - validate
