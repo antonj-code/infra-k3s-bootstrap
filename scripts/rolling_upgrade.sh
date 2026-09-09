@@ -56,17 +56,47 @@ echo "==========================================================================
 KUBECONFIG_FILE="${REPO_ROOT}/credentials/${ENV}/kubeconfig.yaml"
 INVENTORY_FILE="${REPO_ROOT}/environments/${ENV}/ansible/hosts.yaml"
 
-if [[ -f "${KUBECONFIG_FILE}" ]]; then
-    export KUBECONFIG="${KUBECONFIG_FILE}"
-    echo "[INFO] Checking existing cluster health..."
-    TOTAL_READY=$(kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready " || echo "0")
-    echo "[INFO] Ready nodes detected: ${TOTAL_READY}"
+# Retry budget for the between-node health gate. Node readiness after a repave
+# has to cover a full VM clone, cloud-init, hardening and cluster rejoin, so it
+# is deliberately generous; etcd only has to re-add a member.
+NODE_READY_RETRIES="${NODE_READY_RETRIES:-60}"
+ETCD_HEALTH_RETRIES="${ETCD_HEALTH_RETRIES:-30}"
+GATE_DELAY="${GATE_DELAY:-10}"
+
+# The gate below is the only thing standing between a slow rejoin and a lost
+# etcd quorum, so a missing kubeconfig is fatal rather than skippable. It used
+# to be optional, which also silently disabled the cordon/drain in
+# redeploy_node.sh - a repave would then destroy an undrained node.
+if [[ ! -f "${KUBECONFIG_FILE}" ]]; then
+    echo "[ERROR] Kubeconfig not found at ${KUBECONFIG_FILE}."
+    echo "        Without it this script cannot verify node readiness between nodes,"
+    echo "        and redeploy_node.sh would skip cordon/drain entirely."
+    echo "        Run: bash scripts/get_kubeconfig.sh ${ENV}"
+    exit 1
 fi
+
+export KUBECONFIG="${KUBECONFIG_FILE}"
 
 if [[ ! -f "${INVENTORY_FILE}" ]]; then
     echo "[ERROR] Ansible inventory not found at ${INVENTORY_FILE}."
     exit 1
 fi
+
+echo "[INFO] Checking existing cluster health..."
+if ! PREFLIGHT_NODES=$(kubectl get nodes --no-headers 2>&1); then
+    echo "[ERROR] Cannot reach the cluster with ${KUBECONFIG_FILE}:"
+    echo "        ${PREFLIGHT_NODES}"
+    exit 1
+fi
+
+PREFLIGHT_NOT_READY=$(echo "${PREFLIGHT_NODES}" | awk '$2 !~ /^Ready/ {print $1}')
+if [[ -n "${PREFLIGHT_NOT_READY}" ]]; then
+    echo "[ERROR] Refusing to start: these nodes are not Ready:"
+    echo "${PREFLIGHT_NOT_READY}" | sed 's/^/          /'
+    exit 1
+fi
+
+echo "[INFO] Ready nodes detected: $(echo "${PREFLIGHT_NODES}" | wc -l)"
 
 echo "[INFO] Verifying and discovering live DHCP IP addresses from Proxmox..."
 bash "${REPO_ROOT}/scripts/discover_node_ips.sh" "${ENV}"
@@ -76,6 +106,74 @@ CP_NODES=$(grep -A 30 "k3s_control_plane:" "${INVENTORY_FILE}" | grep -E "^\s+k3
 
 PRIMARY_CP=$(echo "${CP_NODES}" | head -n 1)
 SECONDARY_CPS=$(echo "${CP_NODES}" | tail -n +2)
+
+EXPECTED_CP_COUNT=$(echo "${CP_NODES}" | grep -c . || true)
+
+# Block until the node that was just upgraded is back and the cluster is whole
+# again. In --mode in-place this duplicates the checks already in
+# rolling_update.yaml (harmless); in --mode repave it is the only such check,
+# because redeploy_node.sh returns as soon as Ansible finishes and does not
+# wait for the node to register. Without this, upgrading three control planes
+# sequentially can tear down the next etcd member while the previous one is
+# still rejoining, which loses quorum and the cluster with it.
+wait_for_cluster_health() {
+    local node="$1"
+    local attempt node_ready not_ready surviving_cp etcd_out members_healthy
+
+    echo "[GATE] Waiting for ${node} to report Ready (up to $((NODE_READY_RETRIES * GATE_DELAY))s)..."
+    for ((attempt = 1; attempt <= NODE_READY_RETRIES; attempt++)); do
+        node_ready=$(kubectl get node "${node}" \
+            -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+        if [[ "${node_ready}" == "True" ]]; then
+            echo "[GATE] ${node} is Ready."
+            break
+        fi
+        if (( attempt == NODE_READY_RETRIES )); then
+            echo "[ERROR] ${node} did not become Ready in time."
+            echo "        Halting before the next node - continuing would degrade the cluster further."
+            exit 1
+        fi
+        sleep "${GATE_DELAY}"
+    done
+
+    # A node other than the one we touched going NotReady means this upgrade is
+    # doing collateral damage; stop rather than repave into a shrinking cluster.
+    not_ready=$(kubectl get nodes --no-headers 2>/dev/null | awk '$2 !~ /^Ready/ {print $1}' || true)
+    if [[ -n "${not_ready}" ]]; then
+        echo "[ERROR] Other nodes are NotReady after upgrading ${node}:"
+        echo "${not_ready}" | sed 's/^/          /'
+        exit 1
+    fi
+
+    if [[ "${node}" =~ ^k3s-cp- ]]; then
+        surviving_cp=$(echo "${CP_NODES}" | grep -v "^${node}$" | head -n 1)
+        echo "[GATE] Verifying etcd quorum from ${surviving_cp} (expecting ${EXPECTED_CP_COUNT} healthy members)..."
+        for ((attempt = 1; attempt <= ETCD_HEALTH_RETRIES; attempt++)); do
+            # --cluster reports every known member, so counting healthy lines
+            # verifies the repaved node was actually re-added as a member. A
+            # plain `endpoint health` only checks the local one and would pass
+            # at 2-of-3 while the third never rejoined.
+            etcd_out=$(cd "${REPO_ROOT}/ansible" && ansible -i "${INVENTORY_FILE}" "${surviving_cp}" \
+                --become -m ansible.builtin.command \
+                -a "/usr/local/bin/k3s etcdctl endpoint health --cluster" 2>&1 || true)
+            members_healthy=$(echo "${etcd_out}" | grep -c "is healthy" || true)
+            if (( members_healthy >= EXPECTED_CP_COUNT )); then
+                echo "[GATE] etcd quorum healthy (${members_healthy}/${EXPECTED_CP_COUNT} members)."
+                break
+            fi
+            if (( attempt == ETCD_HEALTH_RETRIES )); then
+                echo "[ERROR] etcd did not return to ${EXPECTED_CP_COUNT} healthy members"
+                echo "        (last seen: ${members_healthy}). Halting before the next control plane."
+                echo "${etcd_out}" | sed 's/^/          /'
+                exit 1
+            fi
+            sleep "${GATE_DELAY}"
+        done
+    fi
+
+    echo "[GATE] ${node} settled. Pausing briefly before the next node..."
+    sleep 15
+}
 
 upgrade_node() {
     local node="$1"
@@ -93,8 +191,7 @@ upgrade_node() {
         ansible-playbook -i "${INVENTORY_FILE}" playbooks/rolling_update.yaml --limit "${node}"
     fi
 
-    echo "[INFO] Node ${node} updated. Verifying settled health (15s grace period)..."
-    sleep 15
+    wait_for_cluster_health "${node}"
 }
 
 echo "================================================================================"
@@ -116,10 +213,7 @@ echo "[PHASE 3/3] Upgrading Primary Control Plane Node..."
 echo "================================================================================"
 upgrade_node "${PRIMARY_CP}" "Primary Control Plane"
 
-if [[ -f "${KUBECONFIG_FILE}" ]]; then
-    export KUBECONFIG="${KUBECONFIG_FILE}"
-    kubectl get nodes -o wide --show-labels || true
-fi
+kubectl get nodes -o wide --show-labels || true
 
 echo "================================================================================"
 echo "[SUCCESS] Sequential Rolling Upgrade completed successfully!"
