@@ -149,6 +149,16 @@ SECONDARY_CPS=$(echo "${CP_NODES}" | tail -n +2)
 
 EXPECTED_CP_COUNT=$(echo "${CP_NODES}" | grep -c . || true)
 
+# The version this run is supposed to land, read from the same group_vars the
+# Ansible roles use. Used to prove each node actually moved.
+TARGET_K3S_VERSION=$(sed -n 's/^k3s_version:[[:space:]]*"\(.*\)".*/\1/p' \
+    "${REPO_ROOT}/environments/${ENV}/ansible/group_vars/all.yaml" | head -n 1 || true)
+if [[ -z "${TARGET_K3S_VERSION}" ]]; then
+    echo "[ERROR] Could not read k3s_version from environments/${ENV}/ansible/group_vars/all.yaml."
+    exit 1
+fi
+echo "[INFO] Target k3s version for this run: ${TARGET_K3S_VERSION}"
+
 # Block until the node that was just upgraded is back and the cluster is whole
 # again. In --mode in-place this duplicates the checks already in
 # rolling_update.yaml (harmless); in --mode repave it is the only such check,
@@ -158,7 +168,7 @@ EXPECTED_CP_COUNT=$(echo "${CP_NODES}" | grep -c . || true)
 # still rejoining, which loses quorum and the cluster with it.
 wait_for_cluster_health() {
     local node="$1"
-    local attempt node_ready not_ready etcd_health etcd_members
+    local attempt node_ready node_version not_ready etcd_health etcd_members
 
     echo "[GATE] Waiting for ${node} to report Ready (up to $((NODE_READY_RETRIES * GATE_DELAY))s)..."
     for ((attempt = 1; attempt <= NODE_READY_RETRIES; attempt++)); do
@@ -175,6 +185,22 @@ wait_for_cluster_health() {
         fi
         sleep "${GATE_DELAY}"
     done
+
+    # Ready is not the same as upgraded. If a role silently skips its install
+    # block the node comes back Ready on the old version, etcd stays healthy,
+    # and every other check here passes - the run then reports success having
+    # changed nothing. Compare the kubelet version against the version this run
+    # is deploying, and stop on the node where it actually went wrong.
+    node_version=$(kubectl get node "${node}" \
+        -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null || true)
+    if [[ "${node_version}" != "${TARGET_K3S_VERSION}" ]]; then
+        echo "[ERROR] ${node} is Ready but reports ${node_version:-<unknown>},"
+        echo "        not the expected ${TARGET_K3S_VERSION}. The k3s install was"
+        echo "        skipped or failed silently on this node - halting rather than"
+        echo "        continuing and reporting a success that upgraded nothing."
+        exit 1
+    fi
+    echo "[GATE] ${node} is running ${node_version}."
 
     # A node other than the one we touched going NotReady means this upgrade is
     # doing collateral damage; stop rather than repave into a shrinking cluster.
