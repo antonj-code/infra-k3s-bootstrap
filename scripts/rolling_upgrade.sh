@@ -170,37 +170,31 @@ wait_for_cluster_health() {
     local node="$1"
     local attempt node_ready node_version not_ready etcd_health etcd_members
 
-    echo "[GATE] Waiting for ${node} to report Ready (up to $((NODE_READY_RETRIES * GATE_DELAY))s)..."
+    # Ready and "running the version we asked for" are checked together, in one
+    # retry loop. Checking the version once after the Ready loop raced the node's
+    # re-registration: right after k3s restarts, the Node object can report Ready
+    # before .status.nodeInfo is repopulated, so a single read came back empty and
+    # failed a node that had in fact upgraded correctly. stderr is captured rather
+    # than discarded so a genuine failure reports what kubectl actually said.
+    echo "[GATE] Waiting for ${node} to be Ready on ${TARGET_K3S_VERSION} (up to $((NODE_READY_RETRIES * GATE_DELAY))s)..."
     for ((attempt = 1; attempt <= NODE_READY_RETRIES; attempt++)); do
-        node_ready=$(kubectl get node "${node}" \
-            -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
-        if [[ "${node_ready}" == "True" ]]; then
-            echo "[GATE] ${node} is Ready."
+        node_status=$(kubectl get node "${node}" -o jsonpath=\
+'{.status.conditions[?(@.type=="Ready")].status} {.status.nodeInfo.kubeletVersion}' 2>&1 || true)
+        node_ready="${node_status%% *}"
+        node_version="${node_status##* }"
+        if [[ "${node_ready}" == "True" && "${node_version}" == "${TARGET_K3S_VERSION}" ]]; then
+            echo "[GATE] ${node} is Ready and running ${node_version}."
             break
         fi
         if (( attempt == NODE_READY_RETRIES )); then
-            echo "[ERROR] ${node} did not become Ready in time."
-            echo "        Halting before the next node - continuing would degrade the cluster further."
+            echo "[ERROR] ${node} did not reach Ready on ${TARGET_K3S_VERSION} in time."
+            echo "        last read: ${node_status:-<no output>}"
+            echo "        Halting rather than continuing and reporting a success that"
+            echo "        may have upgraded nothing."
             exit 1
         fi
         sleep "${GATE_DELAY}"
     done
-
-    # Ready is not the same as upgraded. If a role silently skips its install
-    # block the node comes back Ready on the old version, etcd stays healthy,
-    # and every other check here passes - the run then reports success having
-    # changed nothing. Compare the kubelet version against the version this run
-    # is deploying, and stop on the node where it actually went wrong.
-    node_version=$(kubectl get node "${node}" \
-        -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null || true)
-    if [[ "${node_version}" != "${TARGET_K3S_VERSION}" ]]; then
-        echo "[ERROR] ${node} is Ready but reports ${node_version:-<unknown>},"
-        echo "        not the expected ${TARGET_K3S_VERSION}. The k3s install was"
-        echo "        skipped or failed silently on this node - halting rather than"
-        echo "        continuing and reporting a success that upgraded nothing."
-        exit 1
-    fi
-    echo "[GATE] ${node} is running ${node_version}."
 
     # A node other than the one we touched going NotReady means this upgrade is
     # doing collateral damage; stop rather than repave into a shrinking cluster.
