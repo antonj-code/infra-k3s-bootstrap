@@ -1,6 +1,6 @@
 ---
 # Global K3s Cluster Configuration (STAGE)
-k3s_version: "v1.30.4+k3s1"
+k3s_version: "v1.35.8+k3s1"
 k3s_template_version: "1.0.0"
 # k3s_token is deliberately NOT set here - it is the cluster's root credential
 # and is resolved at run time from secret/data/k3s-stage/bootstrap by the
@@ -22,7 +22,7 @@ kube_vip_enabled: true
 kube_vip_address: "192.168.0.43"
 kube_vip_hostname: "k3s-stage.jnet.lan"
 kube_vip_interface: "{{ ansible_facts['default_ipv4']['interface'] | default(ansible_default_ipv4.interface | default('eth0')) }}"
-kube_vip_version: "v0.8.2"
+kube_vip_version: "v1.2.3"
 
 # Control Plane Primary / Initializer (Dynamically derived from inventory)
 k3s_primary_control_plane: "{{ groups['k3s_control_plane'][0] }}"

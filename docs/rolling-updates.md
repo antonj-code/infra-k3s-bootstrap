@@ -125,7 +125,7 @@ For anything in the "No" rows, suppress the pipeline on push and trigger the
 rolling path deliberately afterwards:
 
 ```bash
-git commit -am "Bump stage k3s version to v1.31.4+k3s1"
+git commit -am "Bump stage k3s version to v1.36.4+k3s1"
 git push -o ci.skip origin main
 ```
 
