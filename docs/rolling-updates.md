@@ -36,7 +36,7 @@ workers-first order applies there.
 
 ### Safety Guarantees at Each Step:
 1. **Pre-flight Health Checks**: Verifies that the cluster is healthy, all other nodes are `Ready`, and etcd quorum is functional.
-2. **Cordon & Workload Eviction**: Node is cordoned (`kubectl cordon`) and drained (`kubectl drain --ignore-daemonsets --delete-emptydir-data --force --grace-period=60 --timeout=180s`) so active pods migrate without downtime.
+2. **Cordon & Workload Eviction**: Node is cordoned (`kubectl cordon`) and drained (`kubectl drain --ignore-daemonsets --delete-emptydir-data --force --grace-period=60 --timeout=600s`) so active pods migrate without downtime.
 3. **VM Replacement / Re-Convergence**: In `repave` mode, rebuilds the VM from the template. In `in-place` mode, re-applies OS configuration and reinstalls K3s only if the pinned `k3s_version` has changed.
 4. **Automated Re-Hardening & Cluster Rejoin**: Ansible re-applies sysctl, kernel modules, firewall zones, mounts `/mnt/storage-data01` with XFS for Longhorn (or `/var/lib/rancher/k3s/server/db` for etcd), and connects the node back to the cluster.
 5. **Health & Quorum Verification**: The pipeline waits until the node reaches `Ready` state and verifies etcd quorum health before proceeding to the next node in line.

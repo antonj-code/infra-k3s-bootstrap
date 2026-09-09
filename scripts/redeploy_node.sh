@@ -82,7 +82,7 @@ if [[ -f "${KUBECONFIG_FILE}" ]]; then
 
     if [[ -z "${NODE_READY}" ]]; then
         echo "[INFO] Node ${NODE_NAME} is not registered in the cluster; nothing to drain."
-    elif kubectl drain "${NODE_NAME}" --ignore-daemonsets --delete-emptydir-data --force --grace-period=60 --timeout=180s; then
+    elif kubectl drain "${NODE_NAME}" --ignore-daemonsets --delete-emptydir-data --force --grace-period=60 --timeout=600s; then
         echo "[OK] Node ${NODE_NAME} drained."
     elif [[ "${NODE_READY}" == "True" ]]; then
         echo "[ERROR] Failed to drain healthy node ${NODE_NAME}. Aborting redeploy to prevent data loss."

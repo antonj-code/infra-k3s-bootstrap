@@ -56,9 +56,14 @@
       delegate_to: "{{ groups['k3s_control_plane'][0] }}"
       changed_when: true
 
+    # 600s, not 180s: Longhorn creates a PodDisruptionBudget per instance-manager
+    # with minAvailable 1, which shows ALLOWED DISRUPTIONS 0 while that node holds
+    # a replica. --force does not override a PDB - the drain simply waits until
+    # Longhorn has moved replicas and removed the PDB, which takes longer than
+    # three minutes on anything but a near-empty cluster.
     - name: Drain worker node workloads
       ansible.builtin.command:
-        cmd: /usr/local/bin/k3s kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data --force --grace-period=60 --timeout=180s
+        cmd: /usr/local/bin/k3s kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data --force --grace-period=60 --timeout=600s
       delegate_to: "{{ groups['k3s_control_plane'][0] }}"
       changed_when: true
 
@@ -110,7 +115,7 @@
 
     - name: Drain secondary control plane node workloads
       ansible.builtin.command:
-        cmd: /usr/local/bin/k3s kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data --force --grace-period=60 --timeout=180s
+        cmd: /usr/local/bin/k3s kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data --force --grace-period=60 --timeout=600s
       delegate_to: "{{ groups['k3s_control_plane'][0] }}"
       changed_when: true
 
@@ -174,7 +179,7 @@
 
     - name: Drain primary control plane node workloads
       ansible.builtin.command:
-        cmd: /usr/local/bin/k3s kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data --force --grace-period=60 --timeout=180s
+        cmd: /usr/local/bin/k3s kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data --force --grace-period=60 --timeout=600s
       delegate_to: "{{ surviving_cp }}"
       changed_when: true
 
