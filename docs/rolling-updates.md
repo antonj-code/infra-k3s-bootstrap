@@ -95,7 +95,57 @@ ansible-playbook -i ../environments/stage/ansible/hosts.yaml playbooks/rolling_u
 
 ---
 
-## 3. Monitoring & Validating Progress
+## 3. Pushing Config Changes Safely
+
+A push to `main` that touches `.gitlab-ci.yml`, `.gitlab/`, `ansible/`,
+`environments/`, `terraform/`, `scripts/` or `Makefile` creates a pipeline
+(the `changes:` list in the root `workflow:` rules). `PIPELINE_ACTION` defaults
+to `deploy`, so that pipeline runs `terraform apply` and then
+`playbooks/site.yaml`.
+
+**`site.yaml` is the initial-rollout playbook, not a rolling one.** It applies
+`k3s_common` two nodes at a time, control planes before workers, and workers at
+`serial: 2` - with no `cordon`, no `drain`, and no etcd quorum gate between
+nodes. That is correct for building a cluster from nothing and wrong for
+changing one that is running.
+
+Most pushes are harmless because the change is a no-op against live
+infrastructure - a doc edit, a CI tweak, a script the pipeline does not call.
+The exception is any change the Ansible roles actually act on:
+
+| Change | Safe to push normally? |
+| --- | --- |
+| `docs/` only | Yes - excluded from the `changes:` list, no pipeline at all |
+| CI config, scripts not run by `site.yaml` | Yes - pipeline runs, applies nothing new |
+| `terraform.tfvars`, node counts, VM sizing | No - `terraform apply` acts on it immediately |
+| **`k3s_version` in `group_vars/all.yaml`** | **No - `site.yaml` upgrades K3s 2 workers at a time, undrained** |
+| sysctl, firewall, kernel module defaults | No - re-applied fleet-wide at `serial: 2` |
+
+For anything in the "No" rows, suppress the pipeline on push and trigger the
+rolling path deliberately afterwards:
+
+```bash
+git commit -am "Bump stage k3s version to v1.31.4+k3s1"
+git push -o ci.skip origin main
+```
+
+`-o ci.skip` stops GitLab creating a pipeline for that push without putting
+`[skip ci]` in the commit message. Then start the upgrade from the GitLab UI -
+**Build > Pipelines > New pipeline** - with:
+
+| Variable | Value |
+| --- | --- |
+| `TARGET_ENV` | `STAGE` (or `PROD`) |
+| `PIPELINE_ACTION` | `rolling-upgrade` |
+| `UPGRADE_MODE` | `in-place` (K3s version bump) or `repave` (new template) |
+| `TEMPLATE_ID` | Proxmox template VM ID, `repave` only - blank to use the registry |
+
+That pipeline skips every deploy job and runs only the rolling upgrade, which
+cordons, drains and gates on health between each node.
+
+---
+
+## 4. Monitoring & Validating Progress
 
 You can observe the rolling upgrade in real-time from another terminal:
 
