@@ -320,6 +320,11 @@ prod:recover:node:
     - python3 -c 'import fcntl, os; [fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK) for fd in (0, 1, 2)]'
     - bash ${CI_PROJECT_DIR}/scripts/redeploy_node.sh "${NODE_NAME}" prod
   rules:
+    # Without this the job falls through to the manual fallback below and sits
+    # in a rolling-upgrade pipeline as an idle button next to the job that is
+    # already repaving every node.
+    - if: $PIPELINE_ACTION == "rolling-upgrade"
+      when: never
     - if: $PIPELINE_ACTION == "recover-node"
       when: on_success
     - when: manual
