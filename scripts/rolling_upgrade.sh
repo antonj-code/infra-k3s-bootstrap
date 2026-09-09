@@ -101,8 +101,48 @@ echo "[INFO] Ready nodes detected: $(echo "${PREFLIGHT_NODES}" | wc -l)"
 echo "[INFO] Verifying and discovering live DHCP IP addresses from Proxmox..."
 bash "${REPO_ROOT}/scripts/discover_node_ips.sh" "${ENV}"
 
-WORKER_NODES=$(grep -A 100 "k3s_workers:" "${INVENTORY_FILE}" | grep -E "^\s+k3s-wk-[a-z0-9-]+:" | sed "s/://;s/^[ \t]*//" || echo "")
-CP_NODES=$(grep -A 30 "k3s_control_plane:" "${INVENTORY_FILE}" | grep -E "^\s+k3s-cp-[a-z0-9-]+:" | sed "s/://;s/^[ \t]*//" || echo "")
+# POSIX character classes only. This runs in alpine/ansible, whose BusyBox grep
+# has no GNU \s - the pattern parsed as a literal "s", matched nothing, and the
+# empty node lists turned every phase loop into a no-op that still exited 0.
+# Node names are prefix-distinguished (k3s-wk- / k3s-cp-), so scanning the whole
+# inventory is also simpler and safer than the fixed `grep -A <n>` windows used
+# before, which silently truncated once a section outgrew the window.
+WORKER_NODES=$(grep -E "^[[:space:]]+k3s-wk-[a-z0-9-]+:" "${INVENTORY_FILE}" | sed "s/[[:space:]]//g;s/://" || true)
+CP_NODES=$(grep -E "^[[:space:]]+k3s-cp-[a-z0-9-]+:" "${INVENTORY_FILE}" | sed "s/[[:space:]]//g;s/://" || true)
+
+WORKER_COUNT=$(echo "${WORKER_NODES}" | grep -c . || true)
+CP_COUNT=$(echo "${CP_NODES}" | grep -c . || true)
+PARSED_TOTAL=$((WORKER_COUNT + CP_COUNT))
+READY_TOTAL=$(echo "${PREFLIGHT_NODES}" | grep -c . || true)
+
+echo "[INFO] Parsed ${CP_COUNT} control plane and ${WORKER_COUNT} worker nodes from the inventory."
+
+# A run that upgrades nothing must not report success. Both an unparseable
+# inventory and one left over from a previous cluster land here.
+if [[ "${WORKER_COUNT}" -eq 0 || "${CP_COUNT}" -eq 0 ]]; then
+    echo "[ERROR] Parsed no usable node names from ${INVENTORY_FILE}"
+    echo "        (control planes: ${CP_COUNT}, workers: ${WORKER_COUNT})."
+    echo "        Refusing to continue: an empty node list would make this run a"
+    echo "        silent no-op that still exits 0."
+    exit 1
+fi
+
+# Compare the actual names, not just the counts: a stale inventory left over
+# from a destroyed cluster has the right number of entries and none of the
+# right names, and counting alone would wave it through.
+INVENTORY_SORTED=$(printf '%s\n%s\n' "${CP_NODES}" "${WORKER_NODES}" | grep . | sort)
+LIVE_SORTED=$(echo "${PREFLIGHT_NODES}" | awk '{print $1}' | sort)
+
+if [[ "${INVENTORY_SORTED}" != "${LIVE_SORTED}" ]]; then
+    echo "[ERROR] The inventory does not match the live cluster."
+    echo "        Inventory: ${INVENTORY_FILE} (${PARSED_TOTAL} nodes)"
+    echo "${INVENTORY_SORTED}" | sed 's/^/          inv:  /'
+    echo "        Cluster (${READY_TOTAL} nodes):"
+    echo "${LIVE_SORTED}" | sed 's/^/          live: /'
+    echo "        Upgrading from this would target nodes that do not exist."
+    echo "        Regenerate it with: terraform apply -target=module.k3s_nodes.local_file.ansible_inventory"
+    exit 1
+fi
 
 PRIMARY_CP=$(echo "${CP_NODES}" | head -n 1)
 SECONDARY_CPS=$(echo "${CP_NODES}" | tail -n +2)
