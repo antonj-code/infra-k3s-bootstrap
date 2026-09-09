@@ -1,6 +1,6 @@
 ---
 # Global K3s Cluster Configuration (STAGE)
-k3s_version: "v1.36.4+k3s1"
+k3s_version: "v1.35.8+k3s1"
 k3s_template_version: "1.0.0"
 # k3s_token is deliberately NOT set here - it is the cluster's root credential
 # and is resolved at run time from secret/data/k3s-stage/bootstrap by the
