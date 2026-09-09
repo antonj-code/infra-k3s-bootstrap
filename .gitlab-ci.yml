@@ -78,6 +78,14 @@ stage:pipeline:
   trigger:
     include: .gitlab/ci/stage.gitlab-ci.yml
     strategy: depend
+    # Without this, variables set in the "Run pipeline" form apply only to this
+    # parent pipeline: trigger:forward:pipeline_variables defaults to false, so
+    # the child never sees PIPELINE_ACTION / UPGRADE_MODE / TEMPLATE_ID /
+    # NODE_NAME. The child then falls back to the defaults, runs the full deploy
+    # instead of the requested action, and leaves rolling:upgrade sitting on its
+    # manual fallback rule.
+    forward:
+      pipeline_variables: true
   rules:
     - if: $CI_COMMIT_TAG =~ /^v[0-9]+/ || $CI_COMMIT_TAG =~ /^prod/
       when: never # Tag release is dedicated to PROD promotion
@@ -96,6 +104,14 @@ prod:pipeline:
   trigger:
     include: .gitlab/ci/prod.gitlab-ci.yml
     strategy: depend
+    # Without this, variables set in the "Run pipeline" form apply only to this
+    # parent pipeline: trigger:forward:pipeline_variables defaults to false, so
+    # the child never sees PIPELINE_ACTION / UPGRADE_MODE / TEMPLATE_ID /
+    # NODE_NAME. The child then falls back to the defaults, runs the full deploy
+    # instead of the requested action, and leaves rolling:upgrade sitting on its
+    # manual fallback rule.
+    forward:
+      pipeline_variables: true
   rules:
     # 1. Automatic PROD deployment when promoted via Git Tag (e.g. v1.0.0 or prod-release)
     - if: $CI_COMMIT_TAG =~ /^v[0-9]+/ || $CI_COMMIT_TAG =~ /^prod/
