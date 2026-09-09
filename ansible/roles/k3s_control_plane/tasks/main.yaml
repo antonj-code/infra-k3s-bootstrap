@@ -350,7 +350,16 @@
       ansible.builtin.systemd:
         name: k3s
         daemon_reload: true
-        state: "{{ 'restarted' if (k3s_config_result.changed and k3s_bin_stat.stat.exists and k3s_service_stat.stat.exists) else 'started' }}"
+        # See the matching note in the k3s_worker role: INSTALL_K3S_SKIP_START
+        # means only a restart activates a newly installed binary, so restarting
+        # solely on config change silently skipped version upgrades.
+        state: >-
+          {{ 'restarted'
+             if (k3s_bin_stat.stat.exists and k3s_service_stat.stat.exists
+                 and (k3s_force_restart | default(false)
+                      or k3s_config_result.changed
+                      or (k3s_server_install_result is defined and k3s_server_install_result is changed)))
+             else 'started' }}
         enabled: true
       register: k3s_start_result
       until: k3s_start_result is not failed

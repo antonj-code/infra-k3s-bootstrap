@@ -404,7 +404,21 @@
       ansible.builtin.systemd:
         name: k3s-agent
         daemon_reload: true
-        state: "{{ 'restarted' if (k3s_worker_config_result.changed and k3s_agent_bin_stat.stat.exists and k3s_agent_service_stat.stat.exists) else 'started' }}"
+        # The install script runs with INSTALL_K3S_SKIP_START, so it only writes
+        # the binary - a restart is the only thing that makes a new version take
+        # effect. Restarting solely on a config change meant a version bump left
+        # the new binary on disk with the old process still running, and the node
+        # kept reporting the old version indefinitely. k3s_force_restart is set by
+        # rolling_update.yaml, where the node is already drained and a restart is
+        # the entire point; site.yaml leaves it unset and keeps the old behaviour
+        # of not bouncing healthy nodes needlessly.
+        state: >-
+          {{ 'restarted'
+             if (k3s_agent_bin_stat.stat.exists and k3s_agent_service_stat.stat.exists
+                 and (k3s_force_restart | default(false)
+                      or k3s_worker_config_result.changed
+                      or (k3s_agent_install_result is defined and k3s_agent_install_result is changed)))
+             else 'started' }}
         enabled: true
       register: k3s_agent_start_result
       until: k3s_agent_start_result is not failed

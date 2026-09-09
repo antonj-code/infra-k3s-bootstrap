@@ -46,6 +46,9 @@
   serial: 1
   vars:
     rejoining_existing_cluster: true
+    # This playbook drains each node before touching it, so bouncing k3s is the
+    # whole point - never leave a freshly installed binary un-activated.
+    k3s_force_restart: true
   tasks:
     - name: Cordon worker node
       ansible.builtin.command:
@@ -95,6 +98,9 @@
   serial: 1
   vars:
     rejoining_existing_cluster: true
+    # This playbook drains each node before touching it, so bouncing k3s is the
+    # whole point - never leave a freshly installed binary un-activated.
+    k3s_force_restart: true
   tasks:
     - name: Cordon secondary control plane node
       ansible.builtin.command:
@@ -155,6 +161,9 @@
   serial: 1
   vars:
     rejoining_existing_cluster: true
+    # This playbook drains each node before touching it, so bouncing k3s is the
+    # whole point - never leave a freshly installed binary un-activated.
+    k3s_force_restart: true
     surviving_cp: "{{ (groups['k3s_control_plane'] | difference([inventory_hostname]))[0] }}"
   tasks:
     - name: Cordon primary control plane node
