@@ -24,12 +24,15 @@
       changed_when: false
       failed_when: "'NotReady' in preflight_nodes.stdout or preflight_nodes.rc != 0"
 
+    # k3s ships no etcdctl binary and has no `k3s etcdctl` subcommand, so ask
+    # the apiserver's own etcd readiness probe instead. The old call always
+    # exited 3 with "No help topic for 'etcdctl'".
     - name: Check etcd quorum health
       ansible.builtin.command:
-        cmd: /usr/local/bin/k3s etcdctl endpoint health
+        cmd: /usr/local/bin/k3s kubectl get --raw=/readyz/etcd
       register: preflight_etcd
       changed_when: false
-      failed_when: "'is healthy' not in preflight_etcd.stdout"
+      failed_when: "'ok' not in preflight_etcd.stdout"
 
     - name: Display pre-flight health status
       ansible.builtin.debug:
@@ -132,10 +135,10 @@
 
     - name: Verify etcd cluster health after node upgrade
       ansible.builtin.command:
-        cmd: /usr/local/bin/k3s etcdctl endpoint health
+        cmd: /usr/local/bin/k3s kubectl get --raw=/readyz/etcd
       delegate_to: "{{ groups['k3s_control_plane'][0] }}"
       register: etcd_health
-      until: "'is healthy' in etcd_health.stdout"
+      until: "'ok' in etcd_health.stdout"
       retries: 15
       delay: 5
       changed_when: false
@@ -192,9 +195,9 @@
 
     - name: Verify etcd cluster health
       ansible.builtin.command:
-        cmd: /usr/local/bin/k3s etcdctl endpoint health
+        cmd: /usr/local/bin/k3s kubectl get --raw=/readyz/etcd
       register: final_etcd_health
-      until: "'is healthy' in final_etcd_health.stdout"
+      until: "'ok' in final_etcd_health.stdout"
       retries: 15
       delay: 5
       changed_when: false

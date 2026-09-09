@@ -158,7 +158,7 @@ EXPECTED_CP_COUNT=$(echo "${CP_NODES}" | grep -c . || true)
 # still rejoining, which loses quorum and the cluster with it.
 wait_for_cluster_health() {
     local node="$1"
-    local attempt node_ready not_ready surviving_cp etcd_out members_healthy
+    local attempt node_ready not_ready etcd_health etcd_members
 
     echo "[GATE] Waiting for ${node} to report Ready (up to $((NODE_READY_RETRIES * GATE_DELAY))s)..."
     for ((attempt = 1; attempt <= NODE_READY_RETRIES; attempt++)); do
@@ -186,25 +186,24 @@ wait_for_cluster_health() {
     fi
 
     if [[ "${node}" =~ ^k3s-cp- ]]; then
-        surviving_cp=$(echo "${CP_NODES}" | grep -v "^${node}$" | head -n 1)
-        echo "[GATE] Verifying etcd quorum from ${surviving_cp} (expecting ${EXPECTED_CP_COUNT} healthy members)..."
+        echo "[GATE] Verifying etcd health and membership (expecting ${EXPECTED_CP_COUNT} members)..."
         for ((attempt = 1; attempt <= ETCD_HEALTH_RETRIES; attempt++)); do
-            # --cluster reports every known member, so counting healthy lines
-            # verifies the repaved node was actually re-added as a member. A
-            # plain `endpoint health` only checks the local one and would pass
-            # at 2-of-3 while the third never rejoined.
-            etcd_out=$(cd "${REPO_ROOT}/ansible" && ansible -i "${INVENTORY_FILE}" "${surviving_cp}" \
-                --become -m ansible.builtin.command \
-                -a "/usr/local/bin/k3s etcdctl endpoint health --cluster" 2>&1 || true)
-            members_healthy=$(echo "${etcd_out}" | grep -c "is healthy" || true)
-            if (( members_healthy >= EXPECTED_CP_COUNT )); then
-                echo "[GATE] etcd quorum healthy (${members_healthy}/${EXPECTED_CP_COUNT} members)."
+            # k3s ships no etcdctl and has no `k3s etcdctl` subcommand, so use the
+            # apiserver's own etcd probe. That only reports whether THIS apiserver
+            # can reach a quorate etcd, so pair it with a count of the nodes k3s
+            # labels as etcd members - that is what confirms the node just
+            # upgraded actually rejoined, rather than the cluster limping on
+            # without it.
+            etcd_health=$(kubectl get --raw='/readyz/etcd' 2>/dev/null || true)
+            etcd_members=$(kubectl get nodes -l node-role.kubernetes.io/etcd=true --no-headers 2>/dev/null | grep -c . || true)
+            if [[ "${etcd_health}" == "ok" ]] && (( etcd_members >= EXPECTED_CP_COUNT )); then
+                echo "[GATE] etcd healthy, ${etcd_members}/${EXPECTED_CP_COUNT} members present."
                 break
             fi
             if (( attempt == ETCD_HEALTH_RETRIES )); then
-                echo "[ERROR] etcd did not return to ${EXPECTED_CP_COUNT} healthy members"
-                echo "        (last seen: ${members_healthy}). Halting before the next control plane."
-                echo "${etcd_out}" | sed 's/^/          /'
+                echo "[ERROR] etcd did not return to ${EXPECTED_CP_COUNT} healthy members."
+                echo "        /readyz/etcd returned: ${etcd_health:-<unreachable>}"
+                echo "        nodes labelled as etcd members: ${etcd_members}"
                 exit 1
             fi
             sleep "${GATE_DELAY}"

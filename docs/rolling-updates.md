@@ -154,7 +154,8 @@ You can observe the rolling upgrade in real-time from another terminal:
 source scripts/k3s_env.sh stage
 kubectl get nodes -o wide --watch
 
-# Verify etcd quorum health on control plane
-sudo /usr/local/bin/k3s etcdctl endpoint health
+# Verify etcd health and membership (k3s has no etcdctl subcommand)
+kubectl get --raw='/readyz/etcd'; echo
+kubectl get nodes -l node-role.kubernetes.io/etcd=true
 ```
 
