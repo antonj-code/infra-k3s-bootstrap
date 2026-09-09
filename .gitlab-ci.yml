@@ -53,7 +53,7 @@ variables:
     options:
       - "repave"
       - "in-place"
-    description: "Rolling upgrade strategy: 'repave' (rebuild each VM from the template) or 'in-place' (OS/K3s update on the existing VM)"
+    description: "Rolling upgrade strategy: 'repave' (rebuild each VM from the Proxmox template - this is the only path that changes the OS image) or 'in-place' (re-apply config and install the pinned k3s_version on the existing VM; installs no OS package updates)"
 
   TEMPLATE_ID:
     value: ""
