@@ -194,24 +194,38 @@ upgrade_node() {
     wait_for_cluster_health "${node}"
 }
 
-echo "================================================================================"
-echo "[PHASE 1/3] Sequentially upgrading Worker Nodes..."
-echo "================================================================================"
-for wk in ${WORKER_NODES}; do
-    upgrade_node "${wk}" "Worker"
-done
+nodes_for_phase() {
+    case "$1" in
+        "Worker") echo "${WORKER_NODES}" ;;
+        "Secondary Control Plane") echo "${SECONDARY_CPS}" ;;
+        "Primary Control Plane") echo "${PRIMARY_CP}" ;;
+    esac
+}
 
-echo "================================================================================"
-echo "[PHASE 2/3] Sequentially upgrading Secondary Control Plane Nodes..."
-echo "================================================================================"
-for scp in ${SECONDARY_CPS}; do
-    upgrade_node "${scp}" "Secondary Control Plane"
-done
+# in-place is how a new k3s_version reaches the cluster, and Kubernetes' version
+# skew policy lets a kubelet run older than the apiserver but never newer - so
+# servers have to be upgraded before agents. Repave installs the same pinned
+# k3s_version on every node, so no skew is possible there and the original order
+# stands, which has the advantage of exercising the least critical nodes before
+# anything touches etcd.
+if [[ "${MODE}" == "in-place" ]]; then
+    PHASE_ORDER=("Primary Control Plane" "Secondary Control Plane" "Worker")
+else
+    PHASE_ORDER=("Worker" "Secondary Control Plane" "Primary Control Plane")
+fi
 
-echo "================================================================================"
-echo "[PHASE 3/3] Upgrading Primary Control Plane Node..."
-echo "================================================================================"
-upgrade_node "${PRIMARY_CP}" "Primary Control Plane"
+echo "[INFO] Phase order for ${MODE}: ${PHASE_ORDER[0]} -> ${PHASE_ORDER[1]} -> ${PHASE_ORDER[2]}"
+
+PHASE_NUM=1
+for phase in "${PHASE_ORDER[@]}"; do
+    echo "================================================================================"
+    echo "[PHASE ${PHASE_NUM}/${#PHASE_ORDER[@]}] Sequentially upgrading: ${phase}"
+    echo "================================================================================"
+    for node in $(nodes_for_phase "${phase}"); do
+        upgrade_node "${node}" "${phase}"
+    done
+    PHASE_NUM=$((PHASE_NUM + 1))
+done
 
 kubectl get nodes -o wide --show-labels || true
 

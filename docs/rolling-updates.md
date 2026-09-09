@@ -6,7 +6,10 @@ This guide outlines how the **`infra-k3s-bootstrap`** framework performs automat
 
 ## 1. Upgrade Strategy & Order of Operations
 
-To preserve Kubernetes workload availability and maintain embedded **etcd quorum**, upgrades are strictly executed in a 3-phase sequential order:
+To preserve Kubernetes workload availability and maintain embedded **etcd quorum**, upgrades are executed one node at a time in three phases. **The phase order depends on the mode.**
+
+`--mode repave` - least critical nodes first, so nothing touches etcd until the
+workers are proven on the new template:
 
 ```
 [Phase 1: Workers] ==> [Phase 2: Secondary Control Planes] ==> [Phase 3: Primary Control Plane]
@@ -14,6 +17,22 @@ To preserve Kubernetes workload availability and maintain embedded **etcd quorum
  k3s-wk-s-BBBB (serial:1)   k3s-cp-s-ZZZZ (serial:1)
  k3s-wk-s-CCCC (serial:1)
 ```
+
+`--mode in-place` - **inverted**, servers before agents:
+
+```
+[Phase 1: Primary Control Plane] ==> [Phase 2: Secondary Control Planes] ==> [Phase 3: Workers]
+ k3s-cp-s-XXXX (serial:1)             k3s-cp-s-YYYY (serial:1)                k3s-wk-s-AAAA (serial:1)
+                                      k3s-cp-s-ZZZZ (serial:1)                k3s-wk-s-BBBB (serial:1)
+                                                                              k3s-wk-s-CCCC (serial:1)
+```
+
+In-place is the mode that lands a new `k3s_version`, and Kubernetes' version
+skew policy permits a kubelet to run *older* than the apiserver but never
+newer. Upgrading workers first would put every kubelet ahead of all three
+apiservers for the duration of the run. A repave installs the same pinned
+`k3s_version` on every node, so no skew is possible and the safer
+workers-first order applies there.
 
 ### Safety Guarantees at Each Step:
 1. **Pre-flight Health Checks**: Verifies that the cluster is healthy, all other nodes are `Ready`, and etcd quorum is functional.
