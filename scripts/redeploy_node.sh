@@ -18,6 +18,9 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# shellcheck source=scripts/lib_longhorn.sh
+source "${SCRIPT_DIR}/lib_longhorn.sh"
 INVENTORY_FILE="${REPO_ROOT}/environments/${ENV}/ansible/hosts.yaml"
 TF_DIR="${REPO_ROOT}/environments/${ENV}/terraform"
 KUBECONFIG_FILE="${REPO_ROOT}/credentials/${ENV}/kubeconfig.yaml"
@@ -158,6 +161,12 @@ echo "[STEP 4/4] Validating cluster readiness..."
 if [[ -f "${KUBECONFIG_FILE}" ]]; then
     export KUBECONFIG="${KUBECONFIG_FILE}"
     kubectl get nodes -o wide
+
+    # A repave destroys the node's Longhorn disk, so every replica it held is
+    # rebuilt from scratch after it rejoins. Returning as soon as the node is
+    # Ready reports success while volumes are still degraded - and the next
+    # recovery would then start from a cluster that only looks healthy.
+    wait_for_longhorn_health
 fi
 
 echo "================================================================================"
