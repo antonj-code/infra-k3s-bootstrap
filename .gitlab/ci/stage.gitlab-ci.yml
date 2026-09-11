@@ -1,6 +1,7 @@
 # ==============================================================================
 # STAGE Cluster GitOps Deployment & Node Recovery Pipeline
-# Targets: guardian.jnet.lan (VLAN 20, VIP 192.168.0.41, 6 Nodes: 3 CP + 3 WK)
+# Targets: CPs on guardian.jnet.lan, workers on colossus.jnet.lan
+#          (VLAN 20, VIP 192.168.0.43, 6 Nodes: 3 CP + 3 WK)
 # ==============================================================================
 
 stages:

@@ -47,6 +47,16 @@ module "k3s_nodes" {
   source     = "../../../terraform/modules/k3s_nodes"
   depends_on = [terraform_data.proxmox_credentials_guard]
 
+  # Control planes on guardian; workers (and all Longhorn storage) on colossus,
+  # the stronger host. A playground layout, not a resilient one - see README.
+  providers = {
+    proxmox         = proxmox
+    proxmox.workers = proxmox.pve1
+    local           = local
+    random          = random
+    tls             = tls
+  }
+
   environment                   = "stage"
   inventory_output_path         = "${path.module}/../ansible/hosts.yaml"
 
@@ -59,6 +69,7 @@ module "k3s_nodes" {
   pve_endpoint                  = var.pve_endpoint
   pve_api_token                 = var.pve_api_token
   pve_node_name                 = var.pve_node_name
+  worker_pve_node_name          = var.worker_pve_node_name
   proxmox_insecure              = var.proxmox_insecure
 
   storage_datastore             = var.storage_datastore

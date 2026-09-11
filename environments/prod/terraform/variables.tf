@@ -37,6 +37,10 @@ variable "pve_node_name" {
   type        = string
   default     = "colossus"
 }
+variable "worker_pve_node_name" {
+  type        = string
+  default     = ""
+}
 variable "proxmox_insecure" {
   type        = bool
   default     = true

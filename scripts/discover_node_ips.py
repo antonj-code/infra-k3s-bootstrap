@@ -87,47 +87,45 @@ try:
 except ValueError:
     print("[WARN] DISCOVERY_MAX_ATTEMPTS is not an integer - falling back to 6.")
     MAX_DISCOVERY_ATTEMPTS = 6
-if ENV == "prod":
-    PVE_ENDPOINT = (
-        os.environ.get("TF_VAR_pve_host_1_endpoint") or
-        os.environ.get("PVE_HOST_1_ENDPOINT") or
-        os.environ.get("PVE_ENDPOINT") or
-        "https://colossus.jnet.lan:8006/"
-    ).rstrip("/")
-    PVE_API_TOKEN = (
-        os.environ.get("TF_VAR_pve_host_1_api_token") or
-        os.environ.get("PVE_HOST_1_API_TOKEN") or
-        os.environ.get("PVE_API_TOKEN") or
-        ""
-    )
-    PVE_NODE = (
-        os.environ.get("TF_VAR_pve_host_1_node_name") or
-        os.environ.get("PVE_HOST_1_NODE_NAME") or
-        os.environ.get("PVE_NODE_NAME") or
-        "colossus"
-    )
-else:
-    PVE_ENDPOINT = (
-        os.environ.get("TF_VAR_pve_host_2_endpoint") or
-        os.environ.get("PVE_HOST_2_ENDPOINT") or
-        os.environ.get("PVE_ENDPOINT") or
-        "https://guardian.jnet.lan:8006/"
-    ).rstrip("/")
-    PVE_API_TOKEN = (
-        os.environ.get("TF_VAR_pve_host_2_api_token") or
-        os.environ.get("PVE_HOST_2_API_TOKEN") or
-        os.environ.get("PVE_API_TOKEN") or
-        ""
-    )
-    PVE_NODE = (
-        os.environ.get("TF_VAR_pve_host_2_node_name") or
-        os.environ.get("PVE_HOST_2_NODE_NAME") or
-        os.environ.get("PVE_NODE_NAME") or
-        "guardian"
-    )
+# guardian (host 2) and colossus (host 1) are standalone Proxmox hosts, each
+# with its own API endpoint and token, and both environments span them -
+# control planes on guardian, workers on colossus. Every host with credentials is queried;
+# results are matched against the expected node names, so VMs belonging to
+# the other environment are ignored.
+PVE_HOST_DEFAULTS = {
+    "1": ("https://colossus.jnet.lan:8006/", "colossus"),
+    "2": ("https://guardian.jnet.lan:8006/", "guardian"),
+}
+# The generic PVE_* variables (and pve_* Vault keys) describe only the
+# environment's primary host.
+PRIMARY_PVE_HOST = "1" if ENV == "prod" else "2"
 
-# Load credentials from Vault if available
-if VAULT_TOKEN and not PVE_API_TOKEN:
+def resolve_pve_host(n):
+    primary = n == PRIMARY_PVE_HOST
+    endpoint = (
+        os.environ.get(f"TF_VAR_pve_host_{n}_endpoint") or
+        os.environ.get(f"PVE_HOST_{n}_ENDPOINT") or
+        (os.environ.get("PVE_ENDPOINT") if primary else None) or
+        PVE_HOST_DEFAULTS[n][0]
+    )
+    token = (
+        os.environ.get(f"TF_VAR_pve_host_{n}_api_token") or
+        os.environ.get(f"PVE_HOST_{n}_API_TOKEN") or
+        (os.environ.get("PVE_API_TOKEN") if primary else None) or
+        ""
+    )
+    node = (
+        os.environ.get(f"TF_VAR_pve_host_{n}_node_name") or
+        os.environ.get(f"PVE_HOST_{n}_NODE_NAME") or
+        (os.environ.get("PVE_NODE_NAME") if primary else None) or
+        PVE_HOST_DEFAULTS[n][1]
+    )
+    return {"endpoint": endpoint.rstrip("/"), "token": token, "node": node}
+
+PVE_HOSTS = {n: resolve_pve_host(n) for n in PVE_HOST_DEFAULTS}
+
+# Load credentials from Vault for any host the environment didn't supply
+if VAULT_TOKEN and any(not host["token"] for host in PVE_HOSTS.values()):
     try:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
@@ -140,14 +138,13 @@ if VAULT_TOKEN and not PVE_API_TOKEN:
             res_data = json.loads(response.read().decode())
             data = res_data.get("data", {}).get("data", {})
             if data:
-                if ENV == "prod":
-                    PVE_API_TOKEN = PVE_API_TOKEN or data.get("pve_host_1_api_token") or data.get("pve_api_token", "")
-                    PVE_ENDPOINT = data.get("pve_host_1_endpoint") or data.get("pve_endpoint") or PVE_ENDPOINT
-                    PVE_NODE = data.get("pve_host_1_node_name") or data.get("pve_node_name") or "colossus"
-                else:
-                    PVE_API_TOKEN = PVE_API_TOKEN or data.get("pve_host_2_api_token") or data.get("pve_api_token", "")
-                    PVE_ENDPOINT = data.get("pve_host_2_endpoint") or data.get("pve_endpoint") or PVE_ENDPOINT
-                    PVE_NODE = data.get("pve_host_2_node_name") or data.get("pve_node_name") or "guardian"
+                for n, host in PVE_HOSTS.items():
+                    if host["token"]:
+                        continue
+                    primary = n == PRIMARY_PVE_HOST
+                    host["token"] = data.get(f"pve_host_{n}_api_token") or (data.get("pve_api_token", "") if primary else "")
+                    host["endpoint"] = (data.get(f"pve_host_{n}_endpoint") or (data.get("pve_endpoint") if primary else None) or host["endpoint"]).rstrip("/")
+                    host["node"] = data.get(f"pve_host_{n}_node_name") or (data.get("pve_node_name") if primary else None) or host["node"]
     except Exception as e:
         print(f"[DEBUG] Vault discovery credential check skipped: {e}")
 
@@ -181,17 +178,29 @@ def is_node_address(ip):
     return last_octet != 1
 
 def query_pve_agent_ips():
-    if not PVE_API_TOKEN:
-        return {}
+    discovered = {}
+    queried = set()
+    for host in PVE_HOSTS.values():
+        target = (host["endpoint"], host["node"])
+        if not host["token"] or target in queried:
+            continue
+        queried.add(target)
+        for name, ip in query_pve_host_agent_ips(host).items():
+            discovered.setdefault(name, ip)
+    return discovered
+
+def query_pve_host_agent_ips(host):
     discovered = {}
     try:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        
-        auth_header = f"PVEAPIToken={PVE_API_TOKEN}" if not PVE_API_TOKEN.startswith("PVEAPIToken=") else PVE_API_TOKEN
+
+        token = host["token"]
+        auth_header = f"PVEAPIToken={token}" if not token.startswith("PVEAPIToken=") else token
+        qemu_url = f"{host['endpoint']}/api2/json/nodes/{host['node']}/qemu"
         req = urllib.request.Request(
-            f"{PVE_ENDPOINT}/api2/json/nodes/{PVE_NODE}/qemu",
+            qemu_url,
             headers={"Authorization": auth_header}
         )
         with urllib.request.urlopen(req, timeout=5, context=ctx) as response:
@@ -206,7 +215,7 @@ def query_pve_agent_ips():
                 continue
             try:
                 agent_req = urllib.request.Request(
-                    f"{PVE_ENDPOINT}/api2/json/nodes/{PVE_NODE}/qemu/{vmid}/agent/network-get-interfaces",
+                    f"{qemu_url}/{vmid}/agent/network-get-interfaces",
                     headers={"Authorization": auth_header}
                 )
                 with urllib.request.urlopen(agent_req, timeout=4, context=ctx) as agent_res:

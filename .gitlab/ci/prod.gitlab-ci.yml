@@ -1,6 +1,7 @@
 # ==============================================================================
 # PROD Cluster GitOps Deployment & Node Recovery Pipeline
-# Targets: colossus.jnet.lan (VLAN 30, VIP 192.168.0.42, 8 Nodes: 3 CP + 5 WK)
+# Targets: CPs on guardian.jnet.lan, workers on colossus.jnet.lan
+#          (VLAN 30, VIP 192.168.0.44, 8 Nodes: 3 CP + 5 WK)
 # ==============================================================================
 
 stages:

@@ -1,7 +1,9 @@
-# Prod environment configuration (Targets colossus.jnet.lan)
-pve_node_name               = "colossus"
+# Prod environment configuration
+# Control planes on guardian.jnet.lan, workers on colossus.jnet.lan
+pve_node_name               = "guardian"
 pve_host_1_node_name        = "colossus"
-pve_host_2_node_name        = "colossus"
+pve_host_2_node_name        = "guardian"
+worker_pve_node_name        = "colossus"
 control_plane_count         = 3
 worker_count                = 5
 control_plane_vmid_start    = 4001

@@ -18,6 +18,6 @@ k3s_node_labels:
   - "monitoring.jnet.lan/group=worker"
   - "monitoring.jnet.lan/tier=workload"
   - "topology.kubernetes.io/region=homelab"
-  - "topology.kubernetes.io/zone=guardian"
+  - "topology.kubernetes.io/zone=colossus"
 
 

@@ -6,12 +6,13 @@ locals {
   active_template_vm_id = var.template_vm_id_override != null ? var.template_vm_id_override : lookup(var.template_registry, var.template_version, var.template_vm_id)
   env_char              = substr(var.environment, 0, 1) # 's' for stage, 'p' for prod
   active_pve_node       = var.pve_node_name != "" ? var.pve_node_name : (var.environment == "prod" ? var.pve_host_1_node_name : var.pve_host_2_node_name)
+  worker_pve_node       = var.worker_pve_node_name != "" ? var.worker_pve_node_name : local.active_pve_node
 }
 
 # ==============================================================================
 # Random Suffix Generators for VM & Hostname Generation
 # Format: k3s-cp-<env>-<random> (Control Plane) and k3s-wk-<env>-<random> (Worker)
-# e.g., k3s-cp-s-zzzz (stage on guardian) or k3s-cp-p-yyyy (prod on colossus)
+# e.g., k3s-cp-s-zzzz (stage) or k3s-wk-p-yyyy (prod)
 # ==============================================================================
 
 resource "random_string" "cp_suffix" {
@@ -167,14 +168,15 @@ resource "proxmox_virtual_environment_vm" "k3s_control_plane" {
 # ==============================================================================
 
 resource "proxmox_virtual_environment_vm" "k3s_workers" {
+  provider  = proxmox.workers
   count     = var.worker_count
   name      = "k3s-wk-${local.env_char}-${random_string.worker_suffix[count.index].result}"
-  node_name = local.active_pve_node
+  node_name = local.worker_pve_node
   vm_id     = var.worker_vmid_start + count.index
   pool_id   = var.resource_pool_id != "" ? var.resource_pool_id : null
-  tags      = ["k3s", var.environment, "worker", "compute", "storage", "longhorn", local.active_pve_node, "almalinux9", "cis2"]
+  tags      = ["k3s", var.environment, "worker", "compute", "storage", "longhorn", local.worker_pve_node, "almalinux9", "cis2"]
 
-  description = "K3s Worker / Compute Node ${count.index + 1} (${var.environment} - k3s-wk-${local.env_char}-${random_string.worker_suffix[count.index].result} - ${local.active_pve_node} - template v${var.template_version})"
+  description = "K3s Worker / Compute Node ${count.index + 1} (${var.environment} - k3s-wk-${local.env_char}-${random_string.worker_suffix[count.index].result} - ${local.worker_pve_node} - template v${var.template_version})"
 
   clone {
     vm_id = local.active_template_vm_id

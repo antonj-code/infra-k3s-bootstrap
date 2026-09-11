@@ -6,11 +6,12 @@ This guide details the end-to-end GitOps workflow for **`infra-k3s-bootstrap`**,
 
 ## 1. Multi-Environment Architecture Overview
 
-The infrastructure enforces strict isolation between environments:
+Each environment is its own cluster, with its own VIP, internal VLAN, Terraform state, and Vault path. Both share the same two Proxmox hosts - control planes on `guardian`, workers and Longhorn storage on the stronger `colossus` - because this is a homelab playground, not a production layout (see [Host Layout & Failure Domains](../README.md#host-layout--failure-domains)):
 
 | Feature | STAGE Environment | PROD Environment |
 | :--- | :--- | :--- |
-| **Proxmox VE Hypervisor** | `guardian.jnet.lan` | `colossus.jnet.lan` |
+| **Control Plane Host** | `guardian.jnet.lan` | `guardian.jnet.lan` |
+| **Worker & Longhorn Host** | `colossus.jnet.lan` | `colossus.jnet.lan` |
 | **Control Plane Nodes** | 3x (`k3s-cp-s-*`, VMs `3001-3003`) | 3x (`k3s-cp-p-*`, VMs `4001-4003`) |
 | **Worker Nodes** | 3x (`k3s-wk-s-*`, VMs `3011-3013`) | 5x (`k3s-wk-p-*`, VMs `4011-4015`) |
 | **Total Cluster Size** | **6 Nodes** | **8 Nodes** |
@@ -33,10 +34,10 @@ The root orchestrator ([`.gitlab-ci.yml`](../.gitlab-ci.yml)) delegates environm
   │     ├── terraform:validate:prod
   │     └── ansible:validate
   │
-  ├── deploy:stage ──► Trigger: .gitlab/ci/stage.gitlab-ci.yml (guardian)
+  ├── deploy:stage ──► Trigger: .gitlab/ci/stage.gitlab-ci.yml (CPs: guardian, workers: colossus)
   │     └── [ seed ] ──► [ plan ] ──► [ apply ] ──► [ configure ] ──► [ verify 6/6 ]
   │
-  └── deploy:prod ───► Trigger: .gitlab/ci/prod.gitlab-ci.yml (colossus)
+  └── deploy:prod ───► Trigger: .gitlab/ci/prod.gitlab-ci.yml (CPs: guardian, workers: colossus)
         └── [ seed ] ──► [ plan ] ──► [ apply ] ──► [ configure ] ──► [ verify 8/8 ]
 ```
 
@@ -44,7 +45,7 @@ The root orchestrator ([`.gitlab-ci.yml`](../.gitlab-ci.yml)) delegates environm
 
 ## 3. Triggering a Pipeline for PROD Environment Only
 
-If you want to execute a deployment pipeline that runs **exclusively against PROD (`colossus.jnet.lan`)** while completely skipping STAGE, you can use any of the following methods:
+If you want to execute a deployment pipeline that runs **exclusively against PROD** while completely skipping STAGE, you can use any of the following methods:
 
 ---
 
@@ -57,7 +58,7 @@ If you want to execute a deployment pipeline that runs **exclusively against PRO
 3. Click the blue **Run Pipeline** button.
 
 > [!NOTE]
-> When `TARGET_ENV=PROD` is set, the root pipeline rules set `stage:pipeline` to `never` and immediately trigger `prod:pipeline`. STAGE on `guardian` is **not touched**.
+> When `TARGET_ENV=PROD` is set, the root pipeline rules set `stage:pipeline` to `never` and immediately trigger `prod:pipeline`. STAGE is **not touched**.
 
 ---
 
@@ -77,7 +78,7 @@ git push origin v1.1.0
 - **Pipeline Behavior**:
   - GitLab detects the version tag (`v*` or `prod-*`).
   - STAGE is **completely bypassed** (`when: never`).
-  - The **PROD child pipeline** immediately executes against **`colossus`** (provisions VMs `4001-4015`, hardens AlmaLinux 9, configures K3s with VIP `192.168.0.44`, and asserts 8/8 nodes Ready).
+  - The **PROD child pipeline** immediately executes (provisions control planes `4001-4003` on `guardian` and workers `4011-4015` on `colossus`, hardens AlmaLinux 9, configures K3s with VIP `192.168.0.44`, and asserts 8/8 nodes Ready).
 
 ---
 
@@ -91,7 +92,7 @@ When changes are pushed to `main`, STAGE runs first. Once STAGE finishes:
 ```
 [ validate ] ──────► [ deploy:stage (Runs Auto) ] ──────► [ deploy:prod (Manual Play ▶) ]
                              │                                       │
-                   (STAGE on guardian)                     (PROD on colossus)
+                          (STAGE)                                 (PROD)
 ```
 
 ---

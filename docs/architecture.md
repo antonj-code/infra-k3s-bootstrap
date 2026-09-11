@@ -6,19 +6,21 @@ This document outlines the architecture, hardware layout, networking topology, O
 
 ## 1. Physical & Virtual Topology
 
-The infrastructure spans two dedicated Proxmox VE hypervisor hosts with strict environment isolation:
-- **STAGE Deployment Target (`guardian.jnet.lan`)**: Dedicated hypervisor hosting all 6 virtual machines for the STAGE environment.
-- **PROD Deployment Target (`colossus.jnet.lan`)**: Dedicated hypervisor hosting all 6 virtual machines for the PROD environment.
+The infrastructure spans two Proxmox VE hypervisor hosts, split by role rather than by environment. `colossus` is the stronger host (faster CPU and memory), so it runs every worker - and with them all Longhorn storage - while `guardian` runs every control plane:
+- **STAGE (`guardian.jnet.lan` + `colossus.jnet.lan`)**: 3 control plane VMs on `guardian`, 3 worker VMs on `colossus`. VLAN `20` must be trunked between the two hosts, since node-to-node traffic (kubelet, Flannel host-gw) crosses it.
+- **PROD (`guardian.jnet.lan` + `colossus.jnet.lan`)**: 3 control plane VMs on `guardian`, 5 worker VMs on `colossus`. VLAN `30` must be trunked between the two hosts.
+
+> **Playground layout.** STAGE and PROD are both test environments, and this layout is chosen for the hardware available, not for resilience: losing `guardian` takes down both clusters' control planes, and losing `colossus` takes down both clusters' workers along with every Longhorn replica. A real production environment would distribute each role across hosts. See [Host Layout & Failure Domains](../README.md#host-layout--failure-domains) in the README.
 
 All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2 Template (VM ID: `1001`, version: `1.1.0`)** with a dual-NIC architecture:
 1. **Management Network (`net0`)**: Connected to `vmbr0` (`192.168.0.0/24`), dynamically assigned via Cloud-Init DHCP. Used for external API access, SSH administration, CI/CD runner access, and kube-vip Virtual IPs.
 2. **Internal Cluster Network (`net1`)**: Connected to `vmbr0` with VLAN tagging (VLAN `20` for Stage, VLAN `30` for Prod). Static IP assignments are used for high-performance intra-cluster traffic (etcd quorum, kubelet, and Flannel CNI).
 
-### Topology Diagram (Stage on `guardian` / Prod on `colossus`)
+### Topology Diagram (Control planes on `guardian` / Workers on `colossus`)
 
 ```
 +---------------------------------------------------------------------------------------------------+
-|  STAGE CLUSTER (Proxmox VE Host: guardian.jnet.lan)                                              |
+|  STAGE CLUSTER (Control planes: guardian.jnet.lan / Workers: colossus.jnet.lan)                  |
 |                                                                                                   |
 |  Control Plane Nodes (HA Embedded etcd, N=3)           Worker Nodes (Workloads & Longhorn CSI)    |
 |  • k3s-cp-s-XXXX (VM 3001, net1: 10.20.20.11)          • k3s-wk-s-AAAA (VM 3011, net1: 10.20.20.21)|
@@ -27,7 +29,7 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 |                                                                                                   |
 |  VIP: 192.168.0.43 (k3s-stage.jnet.lan) | net0: DHCP (192.168.0.0/24) | net1: VLAN 20 (10.20.20.0/24) |
 +---------------------------------------------------------------------------------------------------+
-|  PROD CLUSTER (Proxmox VE Host: colossus.jnet.lan)                                               |
+|  PROD CLUSTER (Control planes: guardian.jnet.lan / Workers: colossus.jnet.lan)                   |
 |                                                                                                   |
 |  Control Plane Nodes (HA Embedded etcd, N=3)           Worker Nodes (Workloads & Longhorn CSI, N=5)|
 |  • k3s-cp-p-XXXX (VM 4001, net1: 10.30.30.11)          • k3s-wk-p-AAAA (VM 4011, net1: 10.30.30.21)|
@@ -44,18 +46,18 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 
 ## 2. Resource Allocation Matrix
 
-### STAGE Environment (Proxmox Host: `guardian`)
+### STAGE Environment (Proxmox Hosts: `guardian` + `colossus`)
 
 | Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 20 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS | Proxmox Host |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`k3s-cp-s-<rand>`** | Control Plane (x3) | `3001 - 3003` | DHCP (`192.168.0.x`) | `10.20.20.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `guardian` |
-| **`k3s-wk-s-<rand>`** | Worker / Storage (x3)| `3011 - 3013` | DHCP (`192.168.0.x`) | `10.20.20.21 - 23` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) | `guardian` |
+| **`k3s-wk-s-<rand>`** | Worker / Storage (x3)| `3011 - 3013` | DHCP (`192.168.0.x`) | `10.20.20.21 - 23` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
 
-### PROD Environment (Proxmox Host: `colossus`)
+### PROD Environment (Proxmox Hosts: `guardian` + `colossus`)
 
 | Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 30 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS | Proxmox Host |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`k3s-cp-p-<rand>`** | Control Plane (x3) | `4001 - 4003` | DHCP (`192.168.0.x`) | `10.30.30.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `colossus` |
+| **`k3s-cp-p-<rand>`** | Control Plane (x3) | `4001 - 4003` | DHCP (`192.168.0.x`) | `10.30.30.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `guardian` |
 | **`k3s-wk-p-<rand>`** | Worker / Storage (x5)| `4011 - 4015` | DHCP (`192.168.0.x`) | `10.30.30.21 - 25` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
 
 ### A Note on CPU/Memory Drift

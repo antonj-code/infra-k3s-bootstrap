@@ -58,6 +58,12 @@ variable "pve_node_name" {
   default     = "guardian"
 }
 
+variable "worker_pve_node_name" {
+  description = "Proxmox node name for worker VMs - must be the host the proxmox.workers provider points at. Leave empty to place workers on the control plane host."
+  type        = string
+  default     = ""
+}
+
 variable "proxmox_insecure" {
   description = "Set to true to ignore self-signed SSL certificate warnings from Proxmox"
   type        = bool
