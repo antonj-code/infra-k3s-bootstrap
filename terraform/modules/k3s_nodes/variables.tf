@@ -220,7 +220,7 @@ variable "worker_config" {
     cores             = 4
     memory            = 4096
     disk_size         = 32
-    data_disk_size    = 50
+    data_disk_size    = 80
     runtime_disk_size = 60
   }
 }

@@ -10,7 +10,7 @@ k3s_worker_data_mount: "/mnt/storage-data01"
 # them apart without trusting sd-letter ordering. These MUST stay in sync
 # with worker_config.data_disk_size / worker_config.runtime_disk_size in
 # the environment's terraform.tfvars.
-k3s_worker_data_disk_size_gb: 50
+k3s_worker_data_disk_size_gb: 80
 k3s_worker_runtime_disk_size_gb: 60
 
 # Container runtime storage. One filesystem holds both the containerd image

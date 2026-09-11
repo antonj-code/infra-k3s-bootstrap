@@ -215,7 +215,7 @@ resource "proxmox_virtual_environment_vm" "k3s_workers" {
     file_format  = "raw"
   }
 
-  # Secondary Dedicated Storage Disk (50GB) for Longhorn CSI
+  # Secondary Dedicated Storage Disk (80GB) for Longhorn CSI
   disk {
     datastore_id = var.storage_datastore
     interface    = "scsi1"

@@ -51,14 +51,14 @@ All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2
 | Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 20 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS | Proxmox Host |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`k3s-cp-s-<rand>`** | Control Plane (x3) | `3001 - 3003` | DHCP (`192.168.0.x`) | `10.20.20.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `guardian` |
-| **`k3s-wk-s-<rand>`** | Worker / Storage (x3)| `3011 - 3013` | DHCP (`192.168.0.x`) | `10.20.20.21 - 23` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
+| **`k3s-wk-s-<rand>`** | Worker / Storage (x3)| `3011 - 3013` | DHCP (`192.168.0.x`) | `10.20.20.21 - 23` | 4 | 4096 MB | 32 GB | 80 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
 
 ### PROD Environment (Proxmox Hosts: `guardian` + `colossus`)
 
 | Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 30 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS | Proxmox Host |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`k3s-cp-p-<rand>`** | Control Plane (x3) | `4001 - 4003` | DHCP (`192.168.0.x`) | `10.30.30.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `guardian` |
-| **`k3s-wk-p-<rand>`** | Worker / Storage (x5)| `4011 - 4015` | DHCP (`192.168.0.x`) | `10.30.30.21 - 25` | 4 | 4096 MB | 32 GB | 50 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
+| **`k3s-wk-p-<rand>`** | Worker / Storage (x5)| `4011 - 4015` | DHCP (`192.168.0.x`) | `10.30.30.21 - 25` | 4 | 4096 MB | 32 GB | 80 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
 
 ### A Note on CPU/Memory Drift
 
