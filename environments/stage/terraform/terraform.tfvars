@@ -7,7 +7,7 @@ control_plane_count         = 3
 worker_count                = 3
 control_plane_vmid_start    = 3001
 worker_vmid_start           = 3011
-template_version            = "1.1.0"
+template_version            = "1.2.0"
 
 kube_vip_address            = "192.168.0.43"
 kube_vip_hostname           = "k3s-stage.jnet.lan"
