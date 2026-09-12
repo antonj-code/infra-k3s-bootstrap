@@ -440,12 +440,22 @@
 # booted from a template that predates the argument - where a workload can
 # still be handed huge pages. Once the node next reboots this is redundant
 # and the kernel comes up with THP already off.
+#
+# 'enabled' only, never 'defrag'. transparent_hugepage=never on the kernel
+# command line sets 'enabled' alone; 'defrag' keeps its compile-time default,
+# which is 'madvise' on RHEL-family kernels. Writing 'never' to defrag would
+# hold only until the next boot and then silently revert - exactly the kind of
+# setting-that-looks-applied this role exists to eliminate.
+#
+# Nothing is lost by leaving it: with enabled=never, defrag is inert. It only
+# governs how hard the kernel compacts memory when allocating a transparent
+# huge page, and no THP allocations happen. khugepaged is gated on 'enabled'
+# too, so it does not scan either. defrag is reported below for visibility.
 - name: Read Transparent Huge Pages state of the running kernel
   ansible.builtin.command:
     cmd: "cat /sys/kernel/mm/transparent_hugepage/{{ item }}"
   loop:
     - enabled
-    - defrag
   register: k3s_thp_before
   changed_when: false
 
@@ -464,7 +474,6 @@
     cmd: "cat /sys/kernel/mm/transparent_hugepage/{{ item }}"
   loop:
     - enabled
-    - defrag
   register: k3s_thp_runtime
   changed_when: false
 
@@ -484,6 +493,19 @@
   loop: "{{ k3s_thp_runtime.results }}"
   loop_control:
     label: "transparent_hugepage/{{ item.item }}"
+
+- name: Read Transparent Huge Pages defrag mode
+  ansible.builtin.command:
+    cmd: cat /sys/kernel/mm/transparent_hugepage/defrag
+  register: k3s_thp_defrag
+  changed_when: false
+
+- name: Display Transparent Huge Pages defrag mode
+  ansible.builtin.debug:
+    msg: >-
+      transparent_hugepage/defrag = {{ k3s_thp_defrag.stdout | trim }}
+      (not enforced - inert while enabled=never, and the boot argument
+      does not set it)
 
 # AnonHugePages already faulted in before this ran stay mapped until the
 # owning process exits - 'never' only stops new ones being handed out. This
@@ -705,12 +727,15 @@
     # touched /sys since, so tuned has had its chance and lost. When no reboot
     # was needed, this play already wrote sysfs earlier and the check is weaker
     # - the tuned profile assertion further up is what covers that case.
+    #
+    # 'enabled' only - see the note on the pre-reboot tasks. The boot argument
+    # does not set 'defrag', so asserting on it here would fail on every node
+    # that has in fact booted correctly.
     - name: Read Transparent Huge Pages state in force
       ansible.builtin.command:
         cmd: "cat /sys/kernel/mm/transparent_hugepage/{{ item }}"
       loop:
         - enabled
-        - defrag
       register: k3s_thp_post_reboot
       changed_when: false
       when: ansible_facts['os_family'] == 'RedHat'
@@ -721,9 +746,9 @@
           - "'[never]' in item.stdout"
         fail_msg: >-
           transparent_hugepage/{{ item.item }} reads '{{ item.stdout | trim }}'
-          on the running kernel despite the boot argument being in force.
-          Something re-enables THP after boot - tuned is the usual cause
-          (tuned-adm active).
+          on the running kernel despite transparent_hugepage=never being on its
+          command line. Something re-enables THP after boot; tuned is the usual
+          cause (tuned-adm active).
         success_msg: "transparent_hugepage/{{ item.item }} = [never]"
       loop: "{{ k3s_thp_post_reboot.results | default([]) }}"
       loop_control:
