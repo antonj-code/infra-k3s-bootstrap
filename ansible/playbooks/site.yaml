@@ -28,14 +28,25 @@
         timeout: 180
 
 # --- Step 1: Base System Tuning, Sysctl, Swap, and Kernel Modules ---
-# k3s_common no longer reboots nodes (see its tasks/main.yaml), so there's
-# no fleet-wide reboot storm to guard against here anymore - two nodes at
-# a time.
+# k3s_common reboots again, but need-based rather than unconditionally (see
+# its tasks/main.yaml Step 7): only a node whose running kernel lacks
+# transparent_hugepage=never bounces. On an initial build that is every node,
+# since the VMs booted from a template that predates the argument - so serial: 2
+# is doing real work here, keeping it to two nodes down at a time instead of a
+# fleet-wide reboot storm. On a re-run against an already-built cluster nothing
+# reboots at all.
 - name: Apply OS-level and Kubernetes system settings across all nodes
   hosts: all
   gather_facts: true
   become: true
   serial: 2
+  # Same reasoning as Step 0, and it matters more here: k3s_common asserts on
+  # live kernel state (sysctl, THP, the kernel command line, the tuned profile)
+  # rather than just writing config. Without this, one node failing an assert is
+  # dropped from later plays, the remaining nodes build a short cluster, and
+  # k3s:verify fails ~15 minutes downstream on a node count - burying the
+  # assert's message, which said exactly what was wrong.
+  any_errors_fatal: true
   roles:
     - role: k3s_common
 

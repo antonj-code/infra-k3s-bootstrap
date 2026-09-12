@@ -131,7 +131,8 @@ All nodes cloned from the AlmaLinux 9 CIS Level 2 template receive:
    - `overlay`, `br_netfilter` (Container runtime & bridge filtering)
    - `ip_vs`, `ip_vs_rr`, `ip_vs_wrr`, `ip_vs_sh`, `nf_conntrack` (IPVS proxy)
 
-3. **Sysctl Parameters (`/etc/sysctl.d/99-kubernetes.conf`)**:
+3. **Sysctl Parameters (`/etc/sysctl.d/zz-k3s-kubernetes.conf`)**:
+   - The `zz-` prefix is deliberate. `sysctl.d` files are applied in lexicographic order by *filename* across every directory, and the last name wins - so the CIS template's `net_ipv4_ip_forward.conf` beat the `99-kubernetes.conf` this role used to write, silently pinning `ip_forward` to `0`. The role now removes that stale file and the runtime values are asserted against the live kernel.
    - `net.bridge.bridge-nf-call-iptables = 1`
    - `net.bridge.bridge-nf-call-ip6tables = 1`
    - `net.ipv4.ip_forward = 1`
@@ -148,7 +149,28 @@ All nodes cloned from the AlmaLinux 9 CIS Level 2 template receive:
    - `fs.inotify.max_user_watches = 524288`
    - `fs.inotify.max_user_instances = 8192`
 
-4. **Firewalld Hardening**:
+4. **Transparent Huge Pages Disabled (kernel command line)**:
+   - `transparent_hugepage=never` added to `GRUB_CMDLINE_LINUX` in `/etc/default/grub`, and applied to every already-installed kernel with `grubby --update-kernel=ALL`.
+   - Both are required on AlmaLinux 9: `/etc/default/grub` governs newly installed kernels and any future `grub2-mkconfig`, while the BootLoaderSpec entries under `/boot/loader/entries/` hold the arguments each currently installed kernel actually boots with. `grub.cfg` is deliberately *not* regenerated - `grubby` edits the entries in place, avoiding bootloader churn on a CIS-hardened image.
+   - Applied by the kernel at boot, so it survives reboots and repaves with nothing having to run afterwards. The running kernel is additionally set to `never` via `/sys` during the same play, closing the window on a freshly repaved node that booted from a template predating the argument.
+   - Rationale: khugepaged compaction stalls surface as latency in etcd's fsync path and in Longhorn replica I/O, and AnonHugePages inflate container RSS in 2MB steps, distorting the cgroup memory accounting the kubelet evicts on.
+   - Verified twice before the play advances: `grubby --info=ALL` must show the argument on *every* boot entry, and `/sys/kernel/mm/transparent_hugepage/{enabled,defrag}` must both read `[never]` on the live kernel.
+   - `tuned` is layered on top: the stock `throughput-performance` profile sets `[vm] transparent_hugepages=always` and applies it at boot *after* the kernel has read its command line, silently undoing the boot argument. A derived profile (`k3s-throughput-performance`) `include=`s the base verbatim and overrides only `[vm]`, so all other `throughput-performance` tuning is preserved. `tuned-adm active` reports the derived name; the active profile is asserted too, because this role runs after `tuned` and would otherwise mask the drift behind its own `/sys` write.
+
+5. **SELinux Context Restoration**:
+   - `restorecon` is run on `/etc/default/grub` and the generated `tuned` profile directory whenever either is rewritten.
+   - Ansible sets the policy default context itself when `python3-libselinux` is present on the target; this is the fallback for when it is not. `tuned` runs confined as `tuned_t` and cannot read a profile left with the wrong type - which surfaces at boot as "profile not found" rather than as an obvious denial.
+
+6. **Need-Based Reboot Before K3s Installation** (`k3s_common_reboot`, default `true`):
+   - The role reboots once all OS-level work is complete and before any K3s role runs, so `k3s`, `containerd`, and `etcd` start on a kernel that booted with the intended command line rather than one reconfigured underneath them.
+   - **The decision is need-based, not per-playbook**: it reboots only when the running kernel's command line lacks `transparent_hugepage=never`. One rule, identical in every path, and self-limiting - a node that has already booted with the argument is never rebooted here again.
+     - `site.yaml` and `redeploy_node.yaml`: the VM booted from a template predating the argument, so it reboots and K3s starts on a clean boot.
+     - `rolling_update.yaml` (`--mode in-place`): reboots once per node on the first run after this change, on a node already cordoned and drained, then never again.
+   - Distinct from the unconditional reboot formerly at the *start* of this role, which was removed for masking a disk-naming bug. This one has a cause it can state and check.
+   - Safe in all three paths: `site.yaml` has no cluster yet, `rolling_update.yaml` cordons and drains first, and `redeploy_node.yaml` operates on a freshly repaved VM that has not rejoined (and disables `k3s` across the bounce, so it cannot start against wiped state).
+   - Verification runs whether or not a reboot happened - either the node just rebooted, or it was already running the argument, which is equally good evidence. It re-asserts `/proc/cmdline`, the live THP state, and the cluster-critical sysctls, the last being the only way to prove the `zz-` drop-in ordering wins from cold. The single skipped case is a reboot that was needed and deliberately suppressed via `k3s_common_reboot: false`, where the node is knowingly not there yet.
+
+7. **Firewalld Hardening**:
    - Required ports opened (`6443/tcp`, `2379-2380/tcp`, `10250/tcp`, `30000-32767/tcp`).
    - Management LAN (`192.168.0.0/24`), Internal VLANs (`10.20.20.0/24` or `10.30.30.0/24`), Pod CIDR (`10.42.0.0/16`), and Service CIDR (`10.43.0.0/16`) assigned to `trusted` zone.
    - CNI interfaces (`cni0`, `flannel.1`) assigned to `trusted` zone.

@@ -73,10 +73,19 @@
   gather_facts: false
   become: true
   tasks:
-    - name: Stop k3s and k3s-agent services if present
+    # Disabled, not just stopped: k3s_common reboots the node at the end of
+    # Step 3, and an enabled k3s.service would start on that boot with the
+    # state wiped below - regenerating its own TLS and initialising a fresh
+    # single-node etcd under an identity the cluster does not recognise. The
+    # k3s roles in Step 4 would not undo that, because their stale-state
+    # cleanup is guarded by `not rejoining_existing_cluster`, which this
+    # playbook sets to true. Both roles re-enable the service when they start
+    # it, so this only has to hold across the reboot.
+    - name: Stop and disable k3s and k3s-agent services if present
       ansible.builtin.systemd:
         name: "{{ item }}"
         state: stopped
+        enabled: false
       loop:
         - k3s
         - k3s-agent

@@ -194,6 +194,316 @@
   loop_control:
     label: "{{ item.item }}"
 
+# --- Step 4.5: Transparent Huge Pages (THP / AnonHugePages) ---
+# THP lets the kernel hand out 2MB pages transparently and have khugepaged
+# collapse existing 4KB pages into them in the background. On a Kubernetes
+# node that is a liability rather than a win:
+#   - khugepaged compaction stalls are synchronous and show up as latency
+#     spikes in etcd's fsync path and in Longhorn replica I/O.
+#   - AnonHugePages inflate a container's RSS in steps of 2MB, so the
+#     cgroup memory accounting the kubelet evicts on no longer tracks the
+#     memory the workload actually asked for.
+# AlmaLinux 9 ships THP as 'always', so this has to be turned off explicitly.
+#
+# "Permanently" means the kernel command line: transparent_hugepage=never is
+# applied by the kernel at boot, before any userspace unit could race it, and
+# it survives reboots and repaves without anything having to run afterwards.
+# /sys is not persistent, so a plain write there would be undone by the next
+# reboot - and these nodes are rebooted and repaved routinely.
+#
+# Two places have to agree, because AlmaLinux 9 boots via BootLoaderSpec:
+#   - /etc/default/grub (GRUB_CMDLINE_LINUX) is the source of truth for any
+#     future grub2-mkconfig regeneration and for newly installed kernels.
+#   - /boot/loader/entries/*.conf hold the args each ALREADY-installed kernel
+#     actually boots with. Editing /etc/default/grub does not touch them.
+# grubby --update-kernel=ALL rewrites those entries in place, which is the
+# RHEL-supported way to do this and avoids regenerating grub.cfg on a
+# CIS-hardened image.
+#
+# Nothing in this play consumes the /etc/default/grub edit - grubby is what
+# puts the argument on the entries the node boots from. It is written anyway
+# as a durability guard: if anything ever regenerates grub.cfg (an admin
+# running grub2-mkconfig, a package scriptlet), that regeneration writes
+# GRUB_CMDLINE_LINUX back over the BLS entries and would otherwise wipe the
+# argument grubby set here.
+#
+# Every task in this group is RedHat-gated, this one included, because making
+# the argument persist is a grubby/BLS job with no equivalent here on Debian.
+# Writing /etc/default/grub on a family this role has no way to apply it for
+# would leave a file that reads as configured while the node still comes back
+# with THP on after a reboot - and the runtime assert further down would not
+# catch it, since the /sys write below satisfies that on its own. Debian nodes
+# therefore get THP disabled for the running kernel only, which is the truth.
+- name: Ensure transparent_hugepage=never is in GRUB_CMDLINE_LINUX
+  ansible.builtin.lineinfile:
+    path: /etc/default/grub
+    backrefs: true
+    regexp: '^(GRUB_CMDLINE_LINUX=(?!.*transparent_hugepage=never\b)"?.*?)("?)$'
+    line: '\1 transparent_hugepage=never\2'
+  register: k3s_grub_cmdline
+  when: ansible_facts['os_family'] == 'RedHat'
+
+# Ansible's file modules write via a temp file and atomic rename, and set the
+# policy default context themselves when python3-libselinux is present on the
+# target. restorecon is belt-and-braces for the case where it is not: a
+# /etc/default/grub left as the temp file's context is the kind of thing that
+# breaks a later grub2-mkconfig rather than anything visible now.
+#
+# Gated on 'not disabled' rather than 'enabled' deliberately. When the python
+# bindings are missing, this fact reads 'Missing selinux Python library' while
+# SELinux itself may well be enforcing - which is precisely the case where
+# Ansible could not set the context and restorecon is needed. Testing for
+# 'enabled' would skip the one situation this task exists for.
+- name: Restore SELinux context on /etc/default/grub
+  ansible.builtin.command:
+    cmd: restorecon -F /etc/default/grub
+  changed_when: false
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - (ansible_facts['selinux']['status'] | default('disabled')) != 'disabled'
+    - k3s_grub_cmdline is changed
+
+- name: Read the kernel command line of every installed boot entry
+  ansible.builtin.command:
+    cmd: grubby --info=ALL
+  register: k3s_thp_grubby
+  changed_when: false
+  when: ansible_facts['os_family'] == 'RedHat'
+
+# Checks every args= line rather than searching the whole blob: a node
+# part-way through a kernel update can have one entry carrying the argument
+# and another not, and a plain "not in stdout" test would skip those.
+# (grubby --info prints args=; options= is the raw BLS file's spelling.)
+- name: Add transparent_hugepage=never to all installed kernel boot entries
+  ansible.builtin.command:
+    cmd: grubby --update-kernel=ALL --args=transparent_hugepage=never
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - k3s_thp_grubby.stdout_lines | default([])
+      | select('match', '^args=')
+      | reject('search', 'transparent_hugepage=never')
+      | list | length > 0
+
+# Read the entries back rather than trusting the task above to have fired.
+# The length > 0 assertion is load-bearing: if grubby's output format ever
+# stopped spelling the key args=, the selector in the task above would match
+# nothing, conclude there was nothing to fix, and skip silently - this turns
+# that into a failure instead of a node that quietly boots with THP on.
+- name: Read back the kernel command line of every installed boot entry
+  ansible.builtin.command:
+    cmd: grubby --info=ALL
+  register: k3s_thp_grubby_after
+  changed_when: false
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Assert transparent_hugepage=never is set on every installed kernel entry
+  ansible.builtin.assert:
+    that:
+      - k3s_thp_grubby_after.stdout_lines | select('match', '^args=')
+        | list | length > 0
+      - k3s_thp_grubby_after.stdout_lines | select('match', '^args=')
+        | reject('search', 'transparent_hugepage=never')
+        | list | length == 0
+    fail_msg: >-
+      transparent_hugepage=never is missing from at least one installed kernel
+      boot entry, so this node would come back with THP enabled after its next
+      reboot. Inspect with: grubby --info=ALL
+    success_msg: "transparent_hugepage=never present on all installed kernel entries"
+  when: ansible_facts['os_family'] == 'RedHat'
+
+# tuned re-enables THP behind the kernel's back. The stock
+# throughput-performance profile carries [vm] transparent_hugepages=always,
+# and tuned applies it at boot AFTER the kernel has read transparent_hugepage
+# =never off its command line - so the boot argument alone is not enough.
+#
+# This is the dangerous variant of the failure, not the obvious one: this role
+# runs long after tuned has started, so the /sys write below would overwrite
+# tuned's value, the runtime assert would read [never], and the play would go
+# green while the node quietly returns to THP-on at its next reboot. Same shape
+# as the ip_forward drop-in bug documented in Step 4.
+#
+# The base profile is kept exactly as it is - the derived profile include=s it
+# and overrides nothing but [vm], so every other throughput-performance setting
+# still applies. tuned has no merge-in-place drop-in: an /etc/tuned profile of
+# the SAME name shadows the stock one instead of extending it, and would then
+# include itself. Hence a derived name; `tuned-adm active` reports that name.
+- name: Determine whether tuned will run on this node
+  ansible.builtin.shell:
+    cmd: |
+      enabled=$(systemctl is-enabled tuned 2>/dev/null || true)
+      active=$(systemctl is-active tuned 2>/dev/null || true)
+      if [ "$enabled" = "enabled" ] || [ "$active" = "active" ]; then
+        echo yes
+      else
+        echo no
+      fi
+  register: k3s_tuned_check
+  changed_when: false
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Create the tuned profile directory
+  ansible.builtin.file:
+    path: "/etc/tuned/{{ k3s_tuned_profile }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: (k3s_tuned_check.stdout | default('no') | trim) == 'yes'
+
+- name: Install tuned profile inheriting the base profile with THP disabled
+  ansible.builtin.copy:
+    dest: "/etc/tuned/{{ k3s_tuned_profile }}/tuned.conf"
+    content: |
+      # Managed by Ansible (role: k3s_common) - do not edit on the node.
+      #
+      # Inherits {{ k3s_tuned_base_profile }} unchanged and overrides only the
+      # [vm] section. The stock profile sets transparent_hugepages=always,
+      # which undoes the transparent_hugepage=never kernel boot argument.
+      [main]
+      summary={{ k3s_tuned_base_profile }} with Transparent Huge Pages disabled for K3s
+      include={{ k3s_tuned_base_profile }}
+
+      [vm]
+      transparent_hugepages=never
+    owner: root
+    group: root
+    mode: '0644'
+  register: k3s_tuned_profile_file
+  when: (k3s_tuned_check.stdout | default('no') | trim) == 'yes'
+
+# The stock policy labels /etc/tuned(/.*)? as tuned_etc_t, so a profile
+# directory created here matches the existing rule and needs no semanage
+# fcontext entry - only a relabel. tuned runs confined as tuned_t and cannot
+# read a profile left with the wrong type, which would fail as "profile not
+# found" at boot rather than as an obvious denial.
+- name: Restore SELinux context on the tuned profile directory
+  ansible.builtin.command:
+    cmd: "restorecon -RF /etc/tuned/{{ k3s_tuned_profile }}"
+  changed_when: false
+  when:
+    - (k3s_tuned_check.stdout | default('no') | trim) == 'yes'
+    - (ansible_facts['selinux']['status'] | default('disabled')) != 'disabled'
+    - k3s_tuned_profile_file is changed
+
+- name: Read the active tuned profile
+  ansible.builtin.command:
+    cmd: tuned-adm active
+  register: k3s_tuned_active
+  changed_when: false
+  failed_when: false
+  when: (k3s_tuned_check.stdout | default('no') | trim) == 'yes'
+
+# Re-applied when the profile file itself changed, so an edited [vm] section
+# reaches the running node rather than sitting on disk until the next reboot.
+# Retried: tuned-adm talks to the daemon over D-Bus, and on a node that has
+# just finished booting the daemon can still be coming up even though systemd
+# reports the boot complete. A transient "cannot talk to Tuned daemon" here
+# would otherwise fail the assert below and, with any_errors_fatal on the
+# site.yaml play, abort the whole build.
+- name: Activate the tuned profile
+  ansible.builtin.command:
+    cmd: "tuned-adm profile {{ k3s_tuned_profile }}"
+  register: k3s_tuned_activate
+  until: k3s_tuned_activate is succeeded
+  retries: 5
+  delay: 5
+  when:
+    - (k3s_tuned_check.stdout | default('no') | trim) == 'yes'
+    - (k3s_tuned_profile_file is changed) or
+      (k3s_tuned_profile not in (k3s_tuned_active.stdout | default('')))
+
+- name: Read back the active tuned profile
+  ansible.builtin.command:
+    cmd: tuned-adm active
+  register: k3s_tuned_active_after
+  changed_when: false
+  failed_when: false
+  when: (k3s_tuned_check.stdout | default('no') | trim) == 'yes'
+
+- name: Assert tuned is running the profile that keeps THP disabled
+  ansible.builtin.assert:
+    that:
+      - k3s_tuned_profile in (k3s_tuned_active_after.stdout | default(''))
+    fail_msg: >-
+      tuned will run on this node but is not using {{ k3s_tuned_profile }}
+      (active: '{{ k3s_tuned_active_after.stdout | default('') | trim }}').
+      A stock profile such as {{ k3s_tuned_base_profile }} sets
+      transparent_hugepages=always and will re-enable THP at the next boot,
+      even though the kernel boot argument is correct. Inspect with:
+      tuned-adm active; tuned-adm profile_info.
+    success_msg: "tuned active profile is {{ k3s_tuned_profile }} (THP disabled)"
+  when: (k3s_tuned_check.stdout | default('no') | trim) == 'yes'
+
+# The kernel argument above only takes effect at the next boot, and this role
+# deliberately does not reboot (see Step -1). Set the running kernel now so
+# there is no window - on a freshly repaved node especially, where the VM
+# booted from a template that predates the argument - where a workload can
+# still be handed huge pages. Once the node next reboots this is redundant
+# and the kernel comes up with THP already off.
+- name: Read Transparent Huge Pages state of the running kernel
+  ansible.builtin.command:
+    cmd: "cat /sys/kernel/mm/transparent_hugepage/{{ item }}"
+  loop:
+    - enabled
+    - defrag
+  register: k3s_thp_before
+  changed_when: false
+
+- name: Disable Transparent Huge Pages on the running kernel
+  ansible.builtin.shell:
+    cmd: "echo never > /sys/kernel/mm/transparent_hugepage/{{ item.item }}"
+  loop: "{{ k3s_thp_before.results }}"
+  loop_control:
+    label: "transparent_hugepage/{{ item.item }}"
+  when: "'[never]' not in item.stdout"
+
+# Same reasoning as the sysctl read-back above: editing GRUB and writing sysfs
+# is not evidence that the setting took effect. Read the live kernel state.
+- name: Read back Transparent Huge Pages state from the live kernel
+  ansible.builtin.command:
+    cmd: "cat /sys/kernel/mm/transparent_hugepage/{{ item }}"
+  loop:
+    - enabled
+    - defrag
+  register: k3s_thp_runtime
+  changed_when: false
+
+- name: Assert Transparent Huge Pages are disabled at runtime
+  ansible.builtin.assert:
+    that:
+      - "'[never]' in item.stdout"
+    fail_msg: >-
+      transparent_hugepage/{{ item.item }} is '{{ item.stdout | trim }}' at
+      runtime, expected the active mode to be [never]. Check whether tuned is
+      re-enabling THP through its own profile (tuned-adm active;
+      grep -r transparent_hugepage /usr/lib/tuned/), confirm the boot argument
+      landed with: grubby --info=ALL | grep transparent_hugepage, and check for
+      a denial on the sysfs write with:
+      ausearch -m AVC -ts recent | grep transparent_hugepage.
+    success_msg: "transparent_hugepage/{{ item.item }} = [never]"
+  loop: "{{ k3s_thp_runtime.results }}"
+  loop_control:
+    label: "transparent_hugepage/{{ item.item }}"
+
+# AnonHugePages already faulted in before this ran stay mapped until the
+# owning process exits - 'never' only stops new ones being handed out. This
+# is reported rather than asserted on, since a node just cloned from the
+# template has nothing meaningful mapped yet, and the nodes this role touches
+# mid-life are drained before it runs. It reaches zero after the next reboot,
+# at which point the kernel argument is what is keeping THP off.
+- name: Report residual AnonHugePages still mapped from before THP was disabled
+  ansible.builtin.command:
+    cmd: awk '/AnonHugePages/ {print $2}' /proc/meminfo
+  register: k3s_thp_residual
+  changed_when: false
+
+- name: Display residual AnonHugePages
+  ansible.builtin.debug:
+    msg: >-
+      AnonHugePages currently mapped: {{ k3s_thp_residual.stdout | trim }} kB
+      {{ '(pre-existing mappings, freed as their processes exit)'
+         if (k3s_thp_residual.stdout | trim | int) > 0 else '' }}
+
 # --- Step 5: SELinux Configuration for K3s ---
 - name: Install container-selinux and K3s SELinux policy RPM on RedHat / AlmaLinux
   when: ansible_facts['os_family'] == 'RedHat'
@@ -301,3 +611,145 @@
   when:
     - ansible_facts['os_family'] == 'RedHat'
     - inventory_hostname in groups['k3s_workers']
+
+# --- Step 7: Reboot If The Running Kernel Needs It ---
+# transparent_hugepage=never is a kernel command line argument, so it is only
+# in force on a kernel that BOOTED with it. Everything above writes it to
+# /etc/default/grub and the boot entries; only a reboot makes it live.
+#
+# The decision is need-based rather than per-playbook: reboot when the running
+# kernel's command line lacks what the boot entries now specify. One rule,
+# identical in every path that runs this role, and self-limiting - a node that
+# has already booted with the argument never reboots here again:
+#   - site.yaml / redeploy_node.yaml: the VM booted from a template that
+#     predates the argument, so it reboots, and k3s starts on a clean boot.
+#   - rolling_update.yaml (in-place): reboots once per node on the first run
+#     after this change, on a node that is already drained, then never again.
+#
+# This is NOT the old unconditional reboot removed from the top of this role
+# (Step -1) - that one had no cause and was masking a disk-naming bug.
+- name: Read the kernel command line the node is currently running
+  ansible.builtin.command:
+    cmd: cat /proc/cmdline
+  register: k3s_running_cmdline
+  changed_when: false
+
+- name: Determine whether a reboot is needed to pick up the kernel command line
+  ansible.builtin.set_fact:
+    k3s_reboot_required: >-
+      {{ ansible_facts['os_family'] == 'RedHat'
+         and 'transparent_hugepage=never' not in k3s_running_cmdline.stdout }}
+
+- name: Report the reboot decision
+  ansible.builtin.debug:
+    msg: >-
+      Reboot {{ 'REQUIRED - running kernel lacks transparent_hugepage=never'
+                if (k3s_reboot_required | bool)
+                else 'not needed - running kernel already has the argument' }}
+      {{ '(suppressed by k3s_common_reboot=false)'
+         if ((k3s_reboot_required | bool) and not (k3s_common_reboot | bool)) else '' }}
+
+- name: Apply any pending configuration reloads before rebooting
+  ansible.builtin.meta: flush_handlers
+
+- name: Reboot so the node runs the intended kernel command line
+  when:
+    - k3s_common_reboot | bool
+    - k3s_reboot_required | bool
+  block:
+    - name: Reboot node
+      ansible.builtin.reboot:
+        msg: "Rebooting after k3s_common OS preparation"
+        reboot_timeout: "{{ k3s_common_reboot_timeout }}"
+        post_reboot_delay: 15
+
+    # The reboot module returns as soon as its test command succeeds, which can
+    # be while systemd is still working through boot-time units - same reason
+    # Step -1 waits rather than trusting SSH availability.
+    - name: Wait for systemd to reach a final boot state
+      ansible.builtin.command:
+        cmd: systemctl is-system-running --wait
+      changed_when: false
+      failed_when: false
+
+    - name: Re-gather facts after the reboot
+      ansible.builtin.setup:
+
+# Runs whether or not this play rebooted: either it just did, or the node was
+# already running the argument, and that is equally good evidence. The only
+# case skipped is a reboot that was needed and deliberately suppressed, where
+# the node is knowingly not there yet and failing would be wrong.
+- name: Verify the node is running the intended kernel configuration
+  when: (not (k3s_reboot_required | bool)) or (k3s_common_reboot | bool)
+  block:
+    - name: Read back the kernel command line in force
+      ansible.builtin.command:
+        cmd: cat /proc/cmdline
+      register: k3s_post_reboot_cmdline
+      changed_when: false
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Assert the running kernel has Transparent Huge Pages disabled
+      ansible.builtin.assert:
+        that:
+          - "'transparent_hugepage=never' in k3s_post_reboot_cmdline.stdout"
+        fail_msg: >-
+          The running kernel has no transparent_hugepage=never on its command
+          line, so the GRUB/grubby work above is not in force on this boot.
+          Booted with: {{ k3s_post_reboot_cmdline.stdout | default('') | trim }}
+        success_msg: "Running kernel has transparent_hugepage=never on its command line"
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    # The assertion tuned cannot hide from, but only on a boot this play did
+    # not write sysfs during. When the node rebooted just now, nothing has
+    # touched /sys since, so tuned has had its chance and lost. When no reboot
+    # was needed, this play already wrote sysfs earlier and the check is weaker
+    # - the tuned profile assertion further up is what covers that case.
+    - name: Read Transparent Huge Pages state in force
+      ansible.builtin.command:
+        cmd: "cat /sys/kernel/mm/transparent_hugepage/{{ item }}"
+      loop:
+        - enabled
+        - defrag
+      register: k3s_thp_post_reboot
+      changed_when: false
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Assert Transparent Huge Pages are disabled on the running kernel
+      ansible.builtin.assert:
+        that:
+          - "'[never]' in item.stdout"
+        fail_msg: >-
+          transparent_hugepage/{{ item.item }} reads '{{ item.stdout | trim }}'
+          on the running kernel despite the boot argument being in force.
+          Something re-enables THP after boot - tuned is the usual cause
+          (tuned-adm active).
+        success_msg: "transparent_hugepage/{{ item.item }} = [never]"
+      loop: "{{ k3s_thp_post_reboot.results | default([]) }}"
+      loop_control:
+        label: "transparent_hugepage/{{ item.item }}"
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    # Re-checked rather than assumed: the ip_forward bug documented in Step 4
+    # was precisely a drop-in that lost to another file at boot, and only a
+    # cold boot proves the zz- prefix actually wins.
+    - name: Read back cluster-critical kernel parameters
+      ansible.builtin.command:
+        cmd: "sysctl -n {{ item }}"
+      loop: "{{ k3s_sysctl_required_runtime }}"
+      register: k3s_sysctl_post_reboot
+      changed_when: false
+
+    - name: Assert cluster-critical kernel parameters are in force
+      ansible.builtin.assert:
+        that:
+          - (item.stdout | trim) == '1'
+        fail_msg: >-
+          {{ item.item }} is '{{ item.stdout | trim }}', expected '1'.
+          /etc/sysctl.d/zz-k3s-kubernetes.conf is losing to another drop-in.
+          Find the winner with:
+          grep -rn '{{ item.item }}' /etc/sysctl.conf /etc/sysctl.d/ /usr/lib/sysctl.d/
+        success_msg: "{{ item.item }} = 1"
+      loop: "{{ k3s_sysctl_post_reboot.results }}"
+      loop_control:
+        label: "{{ item.item }}"

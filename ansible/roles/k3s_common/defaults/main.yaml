@@ -68,6 +68,39 @@ k3s_sysctl_settings:
   - { name: 'fs.inotify.max_user_instances', value: '8192' }
   - { name: 'net.core.somaxconn', value: '4096' }
 
+# Whether this role may reboot at the end, once all OS-level work is done and
+# before any k3s role runs. This is a permission, not a schedule: the reboot
+# is need-based (see tasks/main.yaml Step 7) and only happens when the running
+# kernel's command line lacks transparent_hugepage=never. A node that already
+# booted with it is never rebooted here again, so every path converges to zero
+# reboots rather than paying one per run.
+#
+# Safe in every path that runs this role: site.yaml has no cluster yet at this
+# point, rolling_update.yaml cordons and drains the node first, and
+# redeploy_node.yaml is working on a freshly repaved VM that has not rejoined
+# (and disables k3s across the bounce - see that playbook's Step 2.5).
+#
+# Set false to suppress the reboot entirely. The kernel argument is still
+# written and takes effect at whatever reboot the node next takes; the
+# post-reboot assertions are skipped, because a node that is knowingly not
+# there yet should not fail them.
+k3s_common_reboot: true
+k3s_common_reboot_timeout: 600
+
+# tuned profile layered over the stock base profile to keep THP off.
+#
+# throughput-performance sets [vm] transparent_hugepages=always, and tuned
+# applies that at every boot AFTER the kernel has read its command line - so a
+# stock profile silently undoes transparent_hugepage=never. The derived profile
+# below include=s the base verbatim and overrides nothing but [vm], so all of
+# throughput-performance's other tuning is preserved.
+#
+# The base is PINNED here rather than read from `tuned-adm active` on the node:
+# once the derived profile is active, reading the active profile would make a
+# second run include this profile into itself.
+k3s_tuned_base_profile: throughput-performance
+k3s_tuned_profile: k3s-throughput-performance
+
 # Verified against the live kernel after the sysctl file is written. These are
 # the parameters whose absence breaks pod networking silently rather than
 # producing an obvious error - a node with ip_forward=0 still joins, still
