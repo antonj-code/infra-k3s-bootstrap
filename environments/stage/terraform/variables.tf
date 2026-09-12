@@ -80,13 +80,13 @@ variable "ssh_public_keys" {
 variable "template_registry" {
   type        = map(number)
   default = {
-    "1.1.0" = 1001
-    "1.2.0" = 1000
+    "1.1.0" = 1000
+    "1.2.0" = 1001
   }
 }
 variable "template_vm_id" {
   type        = number
-  default     = 1001
+  default     = 1000
 }
 variable "template_vm_id_override" {
   type        = number

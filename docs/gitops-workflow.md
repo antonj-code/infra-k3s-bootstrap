@@ -19,7 +19,7 @@ Each environment is its own cluster, with its own VIP, internal VLAN, Terraform 
 | **Internal Cluster Network**| VLAN `20` (`10.20.20.0/24`) | VLAN `30` (`10.30.30.0/24`) |
 | **Terraform State Backend** | GitLab HTTP (`k3s-stage`) | GitLab HTTP (`k3s-prod`) |
 | **Vault Secrets Path** | `secret/data/k3s-stage/*` | `secret/data/k3s-prod/*` |
-| **Default Template Version**| `1.1.0` (AlmaLinux 9 CIS2, VM `1001`) | `1.1.0` (AlmaLinux 9 CIS2, VM `1001`) |
+| **Default Template Version**| `1.1.0` (AlmaLinux 9 CIS2, VM `1000`) | `1.1.0` (AlmaLinux 9 CIS2, VM `1000`) |
 
 ---
 

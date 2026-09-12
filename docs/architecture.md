@@ -12,7 +12,7 @@ The infrastructure spans two Proxmox VE hypervisor hosts, split by role rather t
 
 > **Playground layout.** STAGE and PROD are both test environments, and this layout is chosen for the hardware available, not for resilience: losing `guardian` takes down both clusters' control planes, and losing `colossus` takes down both clusters' workers along with every Longhorn replica. A real production environment would distribute each role across hosts. See [Host Layout & Failure Domains](../README.md#host-layout--failure-domains) in the README.
 
-All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2 Template (VM ID: `1001`, version: `1.1.0`)** with a dual-NIC architecture:
+All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2 Template (VM ID: `1000`, version: `1.1.0`)** with a dual-NIC architecture:
 1. **Management Network (`net0`)**: Connected to `vmbr0` (`192.168.0.0/24`), dynamically assigned via Cloud-Init DHCP. Used for external API access, SSH administration, CI/CD runner access, and kube-vip Virtual IPs.
 2. **Internal Cluster Network (`net1`)**: Connected to `vmbr0` with VLAN tagging (VLAN `20` for Stage, VLAN `30` for Prod). Static IP assignments are used for high-performance intra-cluster traffic (etcd quorum, kubelet, and Flannel CNI).
 
