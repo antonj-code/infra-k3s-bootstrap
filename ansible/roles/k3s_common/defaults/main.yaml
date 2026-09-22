@@ -126,6 +126,10 @@ k3s_sysctl_required_runtime:
 k3s_control_plane_firewall_ports:
   - "6443/tcp"       # Kubernetes API Server & K3s supervisor (and kube-vip)
   - "2379-2380/tcp"  # Embedded etcd client and peer communication
+  # etcd's Prometheus metrics listener, opened by etcd-expose-metrics. Separate
+  # from 2379/2380 on purpose: those speak mutual TLS and reject an
+  # unauthenticated scrape, while 2381 is plain HTTP and metrics-only.
+  - "2381/tcp"       # Embedded etcd Prometheus metrics
   - "10250/tcp"      # Kubelet API & metrics
   - "2112/tcp"       # kube-vip Prometheus metrics endpoint
   - "53/udp"         # CoreDNS (DNS service on 10.43.0.10)

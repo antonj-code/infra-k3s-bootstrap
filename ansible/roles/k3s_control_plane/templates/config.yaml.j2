@@ -22,6 +22,11 @@ service-cidr: "{{ k3s_service_cidr }}"
 cluster-dns: "{{ k3s_cluster_dns }}"
 flannel-backend: "{{ k3s_flannel_backend }}"
 
+# Embedded etcd Metrics
+{% if k3s_etcd_expose_metrics | default(true) %}
+etcd-expose-metrics: true
+{% endif %}
+
 # SELinux Integration
 {% if k3s_selinux | default(true) %}
 selinux: true

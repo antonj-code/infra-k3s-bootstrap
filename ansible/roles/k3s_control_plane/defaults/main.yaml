@@ -5,3 +5,15 @@ k3s_write_kubeconfig_mode: "0644"
 k3s_etcd_datastore_disk: "/dev/sdb"
 k3s_etcd_mount_point: "/var/lib/rancher/k3s/server/db"
 
+# Embedded etcd starts with --listen-metrics-urls=http://127.0.0.1:2381, so
+# /metrics answers only on loopback and any Prometheus scrape from a pod gets
+# nothing - which is why Grafana's etcd dashboards sit empty. This rebinds the
+# metrics listener to 0.0.0.0:2381.
+#
+# 2381 is the right target for scraping: it serves plain HTTP and needs no
+# client certificate, unlike the client/peer ports 2379/2380, where etcd
+# requires mutual TLS and an unauthenticated scrape is rejected. Nothing
+# sensitive is served there - it is metrics only, and firewalld still limits
+# who can reach it (see k3s_control_plane_firewall_ports).
+k3s_etcd_expose_metrics: true
+

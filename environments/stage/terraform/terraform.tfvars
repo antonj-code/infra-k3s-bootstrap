@@ -25,8 +25,8 @@ control_plane_config = {
 }
 
 worker_config = {
-  cores             = 4
-  memory            = 6144
+  cores             = 6
+  memory            = 8192
   disk_size         = 32
   data_disk_size    = 80
   runtime_disk_size = 60
