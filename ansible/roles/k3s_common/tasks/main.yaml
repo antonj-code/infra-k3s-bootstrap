@@ -108,9 +108,13 @@
 - name: Check the netfilter modules k3s needs are available to the running kernel
   ansible.builtin.command:
     cmd: modinfo -n {{ item }}
+  # xt_mark, lowercase: the MARK target and the mark match live in the same
+  # module (net/netfilter/xt_mark.c registers both), and there has been no
+  # separate xt_MARK.ko for years - the old name survives only as the
+  # MODULE_ALIAS ipt_MARK, which modinfo does not resolve.
   loop:
     - xt_conntrack
-    - xt_MARK
+    - xt_mark
     - xt_comment
   register: k3s_xt_modinfo
   changed_when: false
@@ -135,7 +139,7 @@
       kernel-modules-extra-{{ ansible_facts['kernel'] }} explicitly. Without
       these modules, pods stay in ContainerCreating with portmap/iptables
       "unknown option --set-xmark" errors.
-    success_msg: "xt_conntrack, xt_MARK and xt_comment are all available"
+    success_msg: "xt_conntrack, xt_mark and xt_comment are all available"
   when:
     - ansible_facts['os_family'] == 'RedHat'
     - ansible_facts['distribution_major_version'] | int >= 10

@@ -22,7 +22,7 @@ k3s_common_packages_redhat:
   - xfsprogs
 
 # EL10 moved netfilter's xt_* modules out of the base kernel package, so
-# xt_conntrack, xt_MARK and xt_comment are simply absent without this. The
+# xt_conntrack, xt_mark and xt_comment are simply absent without this. The
 # failure is not a missing module message - it surfaces as pods stuck in
 # ContainerCreating with "plugin type=portmap failed (add)" and
 # "iptables v1.8.9 (nf_tables): unknown option --set-xmark", plus CoreDNS,
