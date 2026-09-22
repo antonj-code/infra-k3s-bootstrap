@@ -21,23 +21,16 @@ k3s_common_packages_redhat:
   - nfs-utils
   - xfsprogs
 
+# EL10 moved netfilter's xt_* modules out of the base kernel package, so
+# xt_conntrack, xt_MARK and xt_comment are simply absent without this. The
+# failure is not a missing module message - it surfaces as pods stuck in
+# ContainerCreating with "plugin type=portmap failed (add)" and
+# "iptables v1.8.9 (nf_tables): unknown option --set-xmark", plus CoreDNS,
+# metrics-server and local-path-provisioner crashlooping on an apiserver they
+# cannot reach. Required by the k3s docs for RHEL 10 (k3s-io/k3s#12600).
+k3s_common_packages_redhat_el10:
+  - kernel-modules-extra
 
-k3s_common_packages_debian:
-  - ca-certificates
-  - curl
-  - gnupg
-  - jq
-  - tar
-  - procps
-  - sudo
-  - iptables
-  - ipset
-  - iproute2
-  - socat
-  - conntrack
-  - open-iscsi
-  - nfs-common
-  - xfsprogs
 
 # Kernel modules required for Kubernetes & IPVS
 k3s_kernel_modules:
@@ -48,6 +41,19 @@ k3s_kernel_modules:
   - ip_vs_wrr
   - ip_vs_sh
   - nf_conntrack
+
+# k3s-selinux policy RPM. The k3s installer is invoked with
+# INSTALL_K3S_SKIP_SELINUX_RPM, so this task is the only thing that installs
+# the policy and the version here is what the nodes actually run.
+#
+# EL10 deliberately gets the SAME el9 build. There is no el10 policy to move
+# to: rpm.rancher.io has no centos/10 channel (404), and the upstream
+# installer has no EL10 branch either - anything past EL8 falls through to
+# centos/9. That el9 policy is therefore what k3s validated on RHEL 10.2 with
+# SELinux enforcing (k3s-io/k3s#14401). The 1.7.testing.* el10 RPMs on GitHub
+# are pre-releases and were not part of that validation. Revisit when
+# k3s-selinux ships a stable el10 build.
+k3s_selinux_rpm_url: "https://github.com/k3s-io/k3s-selinux/releases/download/v1.6.stable.1/k3s-selinux-1.6-1.el9.noarch.rpm"
 
 # Sysctl parameters tailored for Kubernetes & K3s
 k3s_sysctl_settings:
@@ -89,11 +95,15 @@ k3s_common_reboot_timeout: 600
 
 # tuned profile layered over the stock base profile to keep THP off.
 #
-# throughput-performance sets [vm] transparent_hugepages=always, and tuned
-# applies that at every boot AFTER the kernel has read its command line - so a
-# stock profile silently undoes transparent_hugepage=never. The derived profile
-# below include=s the base verbatim and overrides nothing but [vm], so all of
-# throughput-performance's other tuning is preserved.
+# tuned applies its profile at every boot AFTER the kernel has read its
+# command line, so any profile carrying [vm] transparent_hugepages=always
+# silently undoes transparent_hugepage=never. Older RHEL-era profiles shipped
+# exactly that; current upstream throughput-performance (v2.20 through master)
+# sets THP only for Marvell ThunderX aarch64, and to 'never'. The override is
+# therefore a guard against whichever version an image ships, not a fix for a
+# setting known to be present. The derived profile below include=s the base
+# verbatim and overrides nothing but [vm], so all of throughput-performance's
+# other tuning is preserved.
 #
 # The base is PINNED here rather than read from `tuned-adm active` on the node:
 # once the derived profile is active, reading the active profile would make a

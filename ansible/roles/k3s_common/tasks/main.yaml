@@ -1,6 +1,7 @@
 ---
 # ==============================================================================
-# OS Preparation & Hardening for K3s on AlmaLinux 9 CIS Nodes
+# OS Preparation & Hardening for K3s on hardened AlmaLinux CIS Nodes
+# (AlmaLinux 9 CIS Level 2, and AlmaLinux 10 CIS Level 1 from template 2.0.0)
 # ==============================================================================
 
 # --- Step -1: Wait for the VM to Actually Finish Booting ---
@@ -85,7 +86,11 @@
 
 - name: Install required prerequisite packages on AlmaLinux / RedHat
   ansible.builtin.dnf:
-    name: "{{ k3s_common_packages_redhat }}"
+    name: >-
+      {{ k3s_common_packages_redhat
+         + (k3s_common_packages_redhat_el10
+            if ansible_facts['distribution_major_version'] | int >= 10
+            else []) }}
     state: present
     lock_timeout: 180
   register: dnf_pkg_install
@@ -94,13 +99,46 @@
   delay: 10
   when: ansible_facts['os_family'] == 'RedHat'
 
-- name: Install required prerequisite packages on Debian / Ubuntu
-  ansible.builtin.apt:
-    update_cache: true
-    cache_valid_time: 3600
-    name: "{{ k3s_common_packages_debian }}"
-    state: present
-  when: ansible_facts['os_family'] == 'Debian'
+# kernel-modules-extra is version-locked to the running kernel, so a node that
+# installed it against a kernel it has since replaced has the package without
+# the modules. Prove the modules are actually resolvable rather than trusting
+# that the package is present - the symptom otherwise appears much later, as
+# pods stuck in ContainerCreating with portmap/iptables errors that read like a
+# CNI problem rather than a missing module.
+- name: Check the netfilter modules k3s needs are available to the running kernel
+  ansible.builtin.command:
+    cmd: modinfo -n {{ item }}
+  loop:
+    - xt_conntrack
+    - xt_MARK
+    - xt_comment
+  register: k3s_xt_modinfo
+  changed_when: false
+  failed_when: false
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - ansible_facts['distribution_major_version'] | int >= 10
+
+- name: Assert every required netfilter module resolved
+  ansible.builtin.assert:
+    that:
+      - k3s_xt_modinfo.results | rejectattr('rc', 'defined') | list | length == 0
+      - k3s_xt_modinfo.results | selectattr('rc', 'defined')
+        | selectattr('rc', 'ne', 0) | list | length == 0
+    fail_msg: >-
+      Missing from the running kernel ({{ ansible_facts['kernel'] }}):
+      {{ k3s_xt_modinfo.results | selectattr('rc', 'defined')
+         | selectattr('rc', 'ne', 0) | map(attribute='item') | list | join(', ') }}.
+      kernel-modules-extra is version-locked to a specific kernel, so this
+      usually means dnf installed it for a NEWER kernel than the one currently
+      booted. Reboot the node onto that kernel, or install
+      kernel-modules-extra-{{ ansible_facts['kernel'] }} explicitly. Without
+      these modules, pods stay in ContainerCreating with portmap/iptables
+      "unknown option --set-xmark" errors.
+    success_msg: "xt_conntrack, xt_MARK and xt_comment are all available"
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - ansible_facts['distribution_major_version'] | int >= 10
 
 - name: Ensure iscsid service is started and enabled (Required for Longhorn CSI)
   ansible.builtin.systemd:
@@ -136,7 +174,7 @@
   failed_when: false
 
 # --- Step 4: Sysctl Parameters Tuning ---
-# The AlmaLinux 9 CIS template ships its own sysctl drop-ins - notably
+# The AlmaLinux CIS templates ship their own sysctl drop-ins - notably
 # /etc/sysctl.d/net_ipv4_ip_forward.conf, which sets net.ipv4.ip_forward = 0
 # because CIS requires that on hosts that aren't routers.
 #
@@ -203,7 +241,8 @@
 #   - AnonHugePages inflate a container's RSS in steps of 2MB, so the
 #     cgroup memory accounting the kubelet evicts on no longer tracks the
 #     memory the workload actually asked for.
-# AlmaLinux 9 ships THP as 'always', so this has to be turned off explicitly.
+# AlmaLinux ships THP as 'always' on both 9 and 10, so this has to be turned
+# off explicitly.
 #
 # "Permanently" means the kernel command line: transparent_hugepage=never is
 # applied by the kernel at boot, before any userspace unit could race it, and
@@ -211,7 +250,7 @@
 # /sys is not persistent, so a plain write there would be undone by the next
 # reboot - and these nodes are rebooted and repaved routinely.
 #
-# Two places have to agree, because AlmaLinux 9 boots via BootLoaderSpec:
+# Two places have to agree, because AlmaLinux boots via BootLoaderSpec:
 #   - /etc/default/grub (GRUB_CMDLINE_LINUX) is the source of truth for any
 #     future grub2-mkconfig regeneration and for newly installed kernels.
 #   - /boot/loader/entries/*.conf hold the args each ALREADY-installed kernel
@@ -227,13 +266,13 @@
 # GRUB_CMDLINE_LINUX back over the BLS entries and would otherwise wipe the
 # argument grubby set here.
 #
-# Every task in this group is RedHat-gated, this one included, because making
-# the argument persist is a grubby/BLS job with no equivalent here on Debian.
-# Writing /etc/default/grub on a family this role has no way to apply it for
-# would leave a file that reads as configured while the node still comes back
-# with THP on after a reboot - and the runtime assert further down would not
-# catch it, since the /sys write below satisfies that on its own. Debian nodes
-# therefore get THP disabled for the running kernel only, which is the truth.
+# Every task in this group is RedHat-gated, this one included: making the
+# argument persist is a grubby/BLS job, so it only means anything on the
+# RHEL-family images these clusters run. Writing /etc/default/grub on a family
+# this role has no way to apply it for would leave a file that reads as
+# configured while the node still comes back with THP on after a reboot - and
+# the runtime assert further down would not catch it, since the /sys write
+# below satisfies that on its own.
 - name: Ensure transparent_hugepage=never is in GRUB_CMDLINE_LINUX
   ansible.builtin.lineinfile:
     path: /etc/default/grub
@@ -311,10 +350,13 @@
     success_msg: "transparent_hugepage=never present on all installed kernel entries"
   when: ansible_facts['os_family'] == 'RedHat'
 
-# tuned re-enables THP behind the kernel's back. The stock
-# throughput-performance profile carries [vm] transparent_hugepages=always,
-# and tuned applies it at boot AFTER the kernel has read transparent_hugepage
-# =never off its command line - so the boot argument alone is not enough.
+# tuned can re-enable THP behind the kernel's back: a profile carrying
+# [vm] transparent_hugepages=always is applied at boot AFTER the kernel has
+# read transparent_hugepage=never off its command line - so the boot argument
+# alone is not enough. Old RHEL-era throughput-performance did carry it;
+# current upstream (v2.20 through master) does not, setting THP only for
+# Marvell ThunderX aarch64 and to 'never'. What follows is the guard that
+# holds regardless of which version the image ships.
 #
 # This is the dangerous variant of the failure, not the obvious one: this role
 # runs long after tuned has started, so the /sys write below would overwrite
@@ -357,8 +399,13 @@
       # Managed by Ansible (role: k3s_common) - do not edit on the node.
       #
       # Inherits {{ k3s_tuned_base_profile }} unchanged and overrides only the
-      # [vm] section. The stock profile sets transparent_hugepages=always,
-      # which undoes the transparent_hugepage=never kernel boot argument.
+      # [vm] section. This is a guard, not a fix for a specific stock setting:
+      # tuned applies its profile at boot AFTER the kernel has read its command
+      # line, so any profile that sets transparent_hugepages=always would
+      # silently undo transparent_hugepage=never. Older RHEL-era profiles did
+      # exactly that; current upstream throughput-performance (v2.20 through
+      # master) sets THP only for Marvell ThunderX aarch64, and to 'never'.
+      # Pinning it here keeps THP off whichever version the image ships.
       [main]
       summary={{ k3s_tuned_base_profile }} with Transparent Huge Pages disabled for K3s
       include={{ k3s_tuned_base_profile }}
@@ -427,9 +474,9 @@
     fail_msg: >-
       tuned will run on this node but is not using {{ k3s_tuned_profile }}
       (active: '{{ k3s_tuned_active_after.stdout | default('') | trim }}').
-      A stock profile such as {{ k3s_tuned_base_profile }} sets
-      transparent_hugepages=always and will re-enable THP at the next boot,
-      even though the kernel boot argument is correct. Inspect with:
+      A stock profile that sets transparent_hugepages=always would re-enable
+      THP at the next boot even though the kernel boot argument is correct,
+      which is what {{ k3s_tuned_profile }} exists to prevent. Inspect with:
       tuned-adm active; tuned-adm profile_info.
     success_msg: "tuned active profile is {{ k3s_tuned_profile }} (THP disabled)"
   when: (k3s_tuned_check.stdout | default('no') | trim) == 'yes'
@@ -540,13 +587,21 @@
       retries: 5
       delay: 10
 
+    # Both of these used to carry failed_when: false, which made a failed
+    # download or install invisible: the node came up with SELinux enforcing
+    # and no k3s policy, and the first symptom was k3s denials on paths the
+    # policy is supposed to label. Let them fail instead - the retries below
+    # already absorb a transient network blip, so what gets through is a real
+    # failure worth stopping the play for.
     - name: Download k3s-selinux RPM package
       ansible.builtin.get_url:
-        url: "https://github.com/k3s-io/k3s-selinux/releases/download/v1.6.stable.1/k3s-selinux-1.6-1.el9.noarch.rpm"
+        url: "{{ k3s_selinux_rpm_url }}"
         dest: /root/k3s-selinux.rpm
         mode: '0644'
       register: k3s_selinux_download
-      failed_when: false
+      until: k3s_selinux_download is succeeded
+      retries: 5
+      delay: 10
 
     - name: Install k3s-selinux package via dnf
       ansible.builtin.dnf:
@@ -558,8 +613,31 @@
       until: k3s_selinux_install is succeeded
       retries: 5
       delay: 10
-      when: k3s_selinux_download is succeeded and not k3s_selinux_download.failed
-      failed_when: false
+
+    # A successful RPM install still does not prove the policy module loaded -
+    # semodule can reject it while dnf reports success, which is the exact case
+    # to catch on EL10, where the policy is an el9 build running against EL10's
+    # base policy.
+    - name: Read the loaded SELinux policy modules
+      ansible.builtin.command:
+        cmd: semodule --list=full
+      register: k3s_selinux_modules
+      changed_when: false
+      when: (ansible_facts['selinux']['status'] | default('disabled')) != 'disabled'
+
+    - name: Assert the k3s SELinux policy module is loaded
+      ansible.builtin.assert:
+        that:
+          - k3s_selinux_modules.stdout_lines | select('search', '\\bk3s\\b')
+            | list | length > 0
+        fail_msg: >-
+          The k3s-selinux RPM installed but semodule does not list a k3s policy
+          module, so this node is enforcing with no k3s policy and k3s will hit
+          denials on the paths that policy is meant to label. On EL10 the
+          likeliest cause is the el9 policy build being rejected by EL10's base
+          policy - check `semodule --list=full` and the dnf scriptlet output.
+        success_msg: "k3s SELinux policy module is loaded"
+      when: (ansible_facts['selinux']['status'] | default('disabled')) != 'disabled'
 
     - name: Clean up temporary k3s-selinux RPM
       ansible.builtin.file:

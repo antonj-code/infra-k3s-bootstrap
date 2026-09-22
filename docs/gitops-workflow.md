@@ -19,7 +19,7 @@ Each environment is its own cluster, with its own VIP, internal VLAN, Terraform 
 | **Internal Cluster Network**| VLAN `20` (`10.20.20.0/24`) | VLAN `30` (`10.30.30.0/24`) |
 | **Terraform State Backend** | GitLab HTTP (`k3s-stage`) | GitLab HTTP (`k3s-prod`) |
 | **Vault Secrets Path** | `secret/data/k3s-stage/*` | `secret/data/k3s-prod/*` |
-| **Default Template Version**| `1.1.0` (AlmaLinux 9 CIS2, VM `1000`) | `1.1.0` (AlmaLinux 9 CIS2, VM `1000`) |
+| **Default Template Version**| `2.0.0` (AlmaLinux 10 CIS1, VM `1002`) | `1.1.0` (AlmaLinux 9 CIS2, VM `1000`) |
 
 ---
 
@@ -78,7 +78,7 @@ git push origin v1.1.0
 - **Pipeline Behavior**:
   - GitLab detects the version tag (`v*` or `prod-*`).
   - STAGE is **completely bypassed** (`when: never`).
-  - The **PROD child pipeline** immediately executes (provisions control planes `4001-4003` on `guardian` and workers `4011-4015` on `colossus`, hardens AlmaLinux 9, configures K3s with VIP `192.168.0.44`, and asserts 8/8 nodes Ready).
+  - The **PROD child pipeline** immediately executes (provisions control planes `4001-4003` on `guardian` and workers `4011-4015` on `colossus`, hardens the AlmaLinux base image, configures K3s with VIP `192.168.0.44`, and asserts 8/8 nodes Ready).
 
 ---
 

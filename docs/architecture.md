@@ -12,7 +12,14 @@ The infrastructure spans two Proxmox VE hypervisor hosts, split by role rather t
 
 > **Playground layout.** STAGE and PROD are both test environments, and this layout is chosen for the hardware available, not for resilience: losing `guardian` takes down both clusters' control planes, and losing `colossus` takes down both clusters' workers along with every Longhorn replica. A real production environment would distribute each role across hosts. See [Host Layout & Failure Domains](../README.md#host-layout--failure-domains) in the README.
 
-All virtual machines are provisioned from the hardened **AlmaLinux 9 CIS Level 2 Template (VM ID: `1000`, version: `1.1.0`)** with a dual-NIC architecture:
+All virtual machines are provisioned from a hardened AlmaLinux template, selected per environment by `template_version`, with a dual-NIC architecture. Two images are registered today:
+
+| Version | VM ID | Image | Hardening |
+|---|---|---|---|
+| `1.1.0` / `1.2.0` | `1000` / `1001` | AlmaLinux 9 | CIS Level 2 |
+| `2.0.0` | `1002` | AlmaLinux 10 | CIS **Level 1** |
+
+> The AlmaLinux 10 image is Level 1, not Level 2 like its predecessors. The LV layout is unchanged (root 10G, `/var` 5G, `/var/log` 5G, `/var/log/audit` 5G, `/home` 2G, `/tmp` and `/var/tmp` 960M each), so everything the roles build on still holds; it is the additional sysctl, auditd and filesystem restrictions of Level 2 that are absent. It also ships without swap, which suits kubelet.
 1. **Management Network (`net0`)**: Connected to `vmbr0` (`192.168.0.0/24`), dynamically assigned via Cloud-Init DHCP. Used for external API access, SSH administration, CI/CD runner access, and kube-vip Virtual IPs.
 2. **Internal Cluster Network (`net1`)**: Connected to `vmbr0` with VLAN tagging (VLAN `20` for Stage, VLAN `30` for Prod). Static IP assignments are used for high-performance intra-cluster traffic (etcd quorum, kubelet, and Flannel CNI).
 
@@ -120,12 +127,13 @@ Because all cluster nodes in an environment communicate across the internal Laye
 
 ## 5. OS-Level Settings & CIS Hardening
 
-All nodes cloned from the AlmaLinux 9 CIS Level 2 template receive:
+All nodes cloned from a hardened AlmaLinux CIS template receive:
 
 1. **Swap Memory Disablement**:
    - `swapoff -a` executed immediately.
    - Swap partitions and mount points purged from `/etc/fstab`.
    - `vm.swappiness = 0` configured in sysctl.
+   - The AlmaLinux 10 template ships without swap at all, so these run as no-ops there. They stay because they are what keeps swap off if a future image reintroduces it.
 
 2. **Kernel Modules Loaded (`/etc/modules-load.d/k3s-ipvs.conf`)**:
    - `overlay`, `br_netfilter` (Container runtime & bridge filtering)
@@ -151,12 +159,12 @@ All nodes cloned from the AlmaLinux 9 CIS Level 2 template receive:
 
 4. **Transparent Huge Pages Disabled (kernel command line)**:
    - `transparent_hugepage=never` added to `GRUB_CMDLINE_LINUX` in `/etc/default/grub`, and applied to every already-installed kernel with `grubby --update-kernel=ALL`.
-   - Both are required on AlmaLinux 9: `/etc/default/grub` governs newly installed kernels and any future `grub2-mkconfig`, while the BootLoaderSpec entries under `/boot/loader/entries/` hold the arguments each currently installed kernel actually boots with. `grub.cfg` is deliberately *not* regenerated - `grubby` edits the entries in place, avoiding bootloader churn on a CIS-hardened image.
+   - Both are required on AlmaLinux: `/etc/default/grub` governs newly installed kernels and any future `grub2-mkconfig`, while the BootLoaderSpec entries under `/boot/loader/entries/` hold the arguments each currently installed kernel actually boots with. `grub.cfg` is deliberately *not* regenerated - `grubby` edits the entries in place, avoiding bootloader churn on a CIS-hardened image.
    - Applied by the kernel at boot, so it survives reboots and repaves with nothing having to run afterwards. The running kernel is additionally set to `never` via `/sys` during the same play, closing the window on a freshly repaved node that booted from a template predating the argument.
    - Rationale: khugepaged compaction stalls surface as latency in etcd's fsync path and in Longhorn replica I/O, and AnonHugePages inflate container RSS in 2MB steps, distorting the cgroup memory accounting the kubelet evicts on.
    - Verified twice before the play advances: `grubby --info=ALL` must show the argument on *every* boot entry, and `/sys/kernel/mm/transparent_hugepage/enabled` must read `[never]` on the live kernel.
    - Only `enabled` is enforced. `transparent_hugepage=never` sets `enabled` alone - `defrag` keeps its compile-time default (`madvise` on RHEL-family kernels), so forcing it to `never` would hold only until the next boot and then silently revert. It is also inert: with `enabled=never` there are no THP allocations to compact and `khugepaged` does not scan, both being gated on `enabled`. `defrag` is reported for visibility, not asserted.
-   - `tuned` is layered on top: the stock `throughput-performance` profile sets `[vm] transparent_hugepages=always` and applies it at boot *after* the kernel has read its command line, silently undoing the boot argument. A derived profile (`k3s-throughput-performance`) `include=`s the base verbatim and overrides only `[vm]`, so all other `throughput-performance` tuning is preserved. `tuned-adm active` reports the derived name; the active profile is asserted too, because this role runs after `tuned` and would otherwise mask the drift behind its own `/sys` write.
+   - `tuned` is layered on top: tuned applies its profile at boot *after* the kernel has read its command line, so any profile carrying `[vm] transparent_hugepages=always` silently undoes the boot argument. Older RHEL-era `throughput-performance` shipped exactly that; current upstream (v2.20 through master) sets THP only for Marvell ThunderX aarch64, and to `never`. The override is a guard against whichever version an image ships, not a fix for a setting known to be present. A derived profile (`k3s-throughput-performance`) `include=`s the base verbatim and overrides only `[vm]`, so all other `throughput-performance` tuning is preserved. `tuned-adm active` reports the derived name; the active profile is asserted too, because this role runs after `tuned` and would otherwise mask the drift behind its own `/sys` write.
 
 5. **SELinux Context Restoration**:
    - `restorecon` is run on `/etc/default/grub` and the generated `tuned` profile directory whenever either is rewritten.
