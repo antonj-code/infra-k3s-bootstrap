@@ -1,6 +1,6 @@
 # Automated Sequential Rolling Upgrades & Template Repaving
 
-This guide outlines how the **`infra-k3s-bootstrap`** framework performs automated, zero-downtime rolling upgrades across all 6 cluster nodes when the underlying VM template (AlmaLinux 9 CIS Level 2) is updated or when performing cluster maintenance in **STAGE** or **PROD**.
+This guide outlines how the **`infra-k3s-bootstrap`** framework performs automated, zero-downtime rolling upgrades across all 6 cluster nodes when the underlying VM template (hardened AlmaLinux CIS - see [Architecture](architecture.md#1-topology-overview) for the registered images) is updated or when performing cluster maintenance in **STAGE** or **PROD**.
 
 ---
 

@@ -80,8 +80,11 @@ variable "ssh_public_keys" {
 variable "template_registry" {
   type        = map(number)
   default = {
-    "1.1.0" = 1000
-    "1.2.0" = 1001
+    "1.1.0" = 1000 # almalinux-9-cis2
+    "1.2.0" = 1001 # almalinux-9-cis2
+    # Major bump because the OS release changes, not just the image build.
+    # Note this one is CIS Level 1, unlike the Level 2 AlmaLinux 9 images.
+    "2.0.0" = 1002 # almalinux-10-cis1
   }
 }
 variable "template_vm_id" {

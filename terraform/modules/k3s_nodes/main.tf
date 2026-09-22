@@ -33,7 +33,8 @@ resource "random_string" "worker_suffix" {
 
 # ==============================================================================
 # PROXMOX HOST: K3s Control Plane / Management Nodes
-# Cloned from AlmaLinux 9 CIS Level 2 Template
+# Cloned from the hardened AlmaLinux template selected by template_version
+# (AlmaLinux 9 CIS Level 2, or AlmaLinux 10 CIS Level 1 from version 2.0.0)
 # Uses DHCP for dynamic IPv4 assignment
 # ==============================================================================
 
@@ -163,7 +164,8 @@ resource "proxmox_virtual_environment_vm" "k3s_control_plane" {
 
 # ==============================================================================
 # PROXMOX HOST: K3s Worker Nodes
-# Cloned from AlmaLinux 9 CIS Level 2 Template
+# Cloned from the hardened AlmaLinux template selected by template_version
+# (AlmaLinux 9 CIS Level 2, or AlmaLinux 10 CIS Level 1 from version 2.0.0)
 # Uses DHCP for dynamic IPv4 assignment
 # ==============================================================================
 

@@ -135,17 +135,20 @@ variable "ssh_public_keys" {
 variable "template_registry" {
   description = "Registry mapping template version tags to Proxmox VM template IDs (Blue/Green template management)"
   type        = map(number)
+  # Kept in step with environments/{stage,prod}/terraform/variables.tf - those
+  # are what actually resolve a version, so a drifted default here is a trap
+  # for anyone reading the module on its own.
   default = {
-    "1.0.0" = 1000
-    "1.1.0" = 1001 # almalinux-9-cis2-09022026
-    "1.2.0" = 1002
+    "1.1.0" = 1000 # almalinux-9-cis2
+    "1.2.0" = 1001 # almalinux-9-cis2
+    "2.0.0" = 1002 # almalinux-10-cis1 (Level 1, unlike the AlmaLinux 9 images)
   }
 }
 
 variable "template_vm_id" {
-  description = "Fallback default Proxmox VM ID for the CIS Level 2 AlmaLinux 9 template"
+  description = "Fallback default Proxmox VM ID for the hardened AlmaLinux base template"
   type        = number
-  default     = 1001
+  default     = 1000
 }
 
 variable "template_vm_id_override" {
