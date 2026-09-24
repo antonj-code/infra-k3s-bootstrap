@@ -11,32 +11,32 @@ all:
               ansible_host: 192.168.0.211
               k3s_internal_ip: 10.30.30.11
               k3s_node_id: 4001
-              pve_host: colossus
+              pve_host: guardian
               node_role: control-plane
               k3s_node_type: management
               monitoring_group: control-plane
-              template_version: "1.1.0"
-              template_vmid: 1001
+              template_version: "2.0.0"
+              template_vmid: 1002
             k3s-cp-p-c3d4:
               ansible_host: 192.168.0.212
               k3s_internal_ip: 10.30.30.12
               k3s_node_id: 4002
-              pve_host: colossus
+              pve_host: guardian
               node_role: control-plane
               k3s_node_type: management
               monitoring_group: control-plane
-              template_version: "1.1.0"
-              template_vmid: 1001
+              template_version: "2.0.0"
+              template_vmid: 1002
             k3s-cp-p-e5f6:
               ansible_host: 192.168.0.213
               k3s_internal_ip: 10.30.30.13
               k3s_node_id: 4003
-              pve_host: colossus
+              pve_host: guardian
               node_role: control-plane
               k3s_node_type: management
               monitoring_group: control-plane
-              template_version: "1.1.0"
-              template_vmid: 1001
+              template_version: "2.0.0"
+              template_vmid: 1002
         k3s_workers:
           hosts:
             k3s-wk-p-g7h8:
@@ -48,8 +48,8 @@ all:
               k3s_node_type: compute
               monitoring_group: worker
               has_longhorn_storage: true
-              template_version: "1.1.0"
-              template_vmid: 1001
+              template_version: "2.0.0"
+              template_vmid: 1002
             k3s-wk-p-j9k0:
               ansible_host: 192.168.0.222
               k3s_internal_ip: 10.30.30.22
@@ -59,8 +59,8 @@ all:
               k3s_node_type: compute
               monitoring_group: worker
               has_longhorn_storage: true
-              template_version: "1.1.0"
-              template_vmid: 1001
+              template_version: "2.0.0"
+              template_vmid: 1002
             k3s-wk-p-m1n2:
               ansible_host: 192.168.0.223
               k3s_internal_ip: 10.30.30.23
@@ -70,30 +70,8 @@ all:
               k3s_node_type: compute
               monitoring_group: worker
               has_longhorn_storage: true
-              template_version: "1.1.0"
-              template_vmid: 1001
-            k3s-wk-p-p3q4:
-              ansible_host: 192.168.0.224
-              k3s_internal_ip: 10.30.30.24
-              k3s_node_id: 4014
-              pve_host: colossus
-              node_role: worker
-              k3s_node_type: compute
-              monitoring_group: worker
-              has_longhorn_storage: true
-              template_version: "1.1.0"
-              template_vmid: 1001
-            k3s-wk-p-s5t6:
-              ansible_host: 192.168.0.225
-              k3s_internal_ip: 10.30.30.25
-              k3s_node_id: 4015
-              pve_host: colossus
-              node_role: worker
-              k3s_node_type: compute
-              monitoring_group: worker
-              has_longhorn_storage: true
-              template_version: "1.1.0"
-              template_vmid: 1001
+              template_version: "2.0.0"
+              template_vmid: 1002
 
     monitoring_nodes:
       children:

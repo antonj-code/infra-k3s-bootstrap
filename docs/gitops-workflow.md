@@ -13,13 +13,13 @@ Each environment is its own cluster, with its own VIP, internal VLAN, Terraform 
 | **Control Plane Host** | `guardian.jnet.lan` | `guardian.jnet.lan` |
 | **Worker & Longhorn Host** | `colossus.jnet.lan` | `colossus.jnet.lan` |
 | **Control Plane Nodes** | 3x (`k3s-cp-s-*`, VMs `3001-3003`) | 3x (`k3s-cp-p-*`, VMs `4001-4003`) |
-| **Worker Nodes** | 3x (`k3s-wk-s-*`, VMs `3011-3013`) | 5x (`k3s-wk-p-*`, VMs `4011-4015`) |
-| **Total Cluster Size** | **6 Nodes** | **8 Nodes** |
+| **Worker Nodes** | 3x (`k3s-wk-s-*`, VMs `3011-3013`) | 3x (`k3s-wk-p-*`, VMs `4011-4013`) |
+| **Total Cluster Size** | **6 Nodes** | **6 Nodes** |
 | **Control Plane VIP** | `192.168.0.43` (`k3s-stage.jnet.lan`) | `192.168.0.44` (`k3s-prod.jnet.lan`) |
 | **Internal Cluster Network**| VLAN `20` (`10.20.20.0/24`) | VLAN `30` (`10.30.30.0/24`) |
 | **Terraform State Backend** | GitLab HTTP (`k3s-stage`) | GitLab HTTP (`k3s-prod`) |
 | **Vault Secrets Path** | `secret/data/k3s-stage/*` | `secret/data/k3s-prod/*` |
-| **Default Template Version**| `2.0.0` (AlmaLinux 10 CIS1, VM `1002`) | `1.1.0` (AlmaLinux 9 CIS2, VM `1000`) |
+| **Default Template Version**| `2.0.0` (AlmaLinux 10 CIS1, VM `1002`) | `2.0.0` (AlmaLinux 10 CIS1, VM `1002`) |
 
 ---
 
@@ -38,7 +38,7 @@ The root orchestrator ([`.gitlab-ci.yml`](../.gitlab-ci.yml)) delegates environm
   │     └── [ seed ] ──► [ plan ] ──► [ apply ] ──► [ configure ] ──► [ verify 6/6 ]
   │
   └── deploy:prod ───► Trigger: .gitlab/ci/prod.gitlab-ci.yml (CPs: guardian, workers: colossus)
-        └── [ seed ] ──► [ plan ] ──► [ apply ] ──► [ configure ] ──► [ verify 8/8 ]
+        └── [ seed ] ──► [ plan ] ──► [ apply ] ──► [ configure ] ──► [ verify 6/6 ]
 ```
 
 ---
@@ -78,7 +78,7 @@ git push origin v1.1.0
 - **Pipeline Behavior**:
   - GitLab detects the version tag (`v*` or `prod-*`).
   - STAGE is **completely bypassed** (`when: never`).
-  - The **PROD child pipeline** immediately executes (provisions control planes `4001-4003` on `guardian` and workers `4011-4015` on `colossus`, hardens the AlmaLinux base image, configures K3s with VIP `192.168.0.44`, and asserts 8/8 nodes Ready).
+  - The **PROD child pipeline** immediately executes (provisions control planes `4001-4003` on `guardian` and workers `4011-4013` on `colossus`, hardens the AlmaLinux base image, configures K3s with VIP `192.168.0.44`, and asserts 6/6 nodes Ready).
 
 ---
 
@@ -114,10 +114,10 @@ If a VM becomes corrupted, fails a hardware health check, or experiences kernel 
 ```
 [ Step 1: Workload Eviction ] ──► [ Step 2: Targeted Re-Clone ] ──► [ Step 3: Hardening & Join ] ──► [ Step 4: Verification ]
   • Drains active pods / etcd       • Terraform -replace on VM        • Formats XFS secondary disk     • Asserts cluster health
-  • Kubernetes shifts pods          • Clones fresh template v1.1.0    • Applies CIS sysctl settings    • Confirms Ready state
+  • Kubernetes shifts pods          • Clones fresh template v2.0.0    • Applies CIS sysctl settings    • Confirms Ready state
 ```
 
-- **Targeted Scope**: Terraform uses `-replace="module.k3s_nodes.proxmox_virtual_environment_vm.k3s_workers[INDEX]"` so the other 7 nodes in PROD are left running uninterrupted.
+- **Targeted Scope**: Terraform uses `-replace="module.k3s_nodes.proxmox_virtual_environment_vm.k3s_workers[INDEX]"` so the other 5 nodes in PROD are left running uninterrupted.
 
 ---
 
@@ -126,11 +126,11 @@ If a VM becomes corrupted, fails a hardware health check, or experiences kernel 
 You can maintain different VM template versions between STAGE and PROD:
 
 1. **Test in STAGE**:
-   - Update `template_version = "1.2.0"` in [`environments/stage/terraform/terraform.tfvars`](../environments/stage/terraform/terraform.tfvars).
+   - Update `template_version` to the new tag in [`environments/stage/terraform/terraform.tfvars`](../environments/stage/terraform/terraform.tfvars).
    - Run rolling repave: `make repave ENV=stage` (or `bash scripts/rolling_upgrade.sh --mode repave --env stage`).
-   - PROD remains untouched on `1.1.0`.
+   - PROD remains untouched on `2.0.0`.
 2. **Promote to PROD**:
-   - Update `template_version = "1.2.0"` in [`environments/prod/terraform/terraform.tfvars`](../environments/prod/terraform/terraform.tfvars).
+   - Update `template_version` to the same tag in [`environments/prod/terraform/terraform.tfvars`](../environments/prod/terraform/terraform.tfvars).
    - Promote via tag: `make promote TAG=v1.2.0`.
 
 ---

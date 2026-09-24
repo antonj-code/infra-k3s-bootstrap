@@ -5,10 +5,10 @@ pve_host_1_node_name        = "colossus"
 pve_host_2_node_name        = "guardian"
 worker_pve_node_name        = "colossus"
 control_plane_count         = 3
-worker_count                = 5
+worker_count                = 3
 control_plane_vmid_start    = 4001
 worker_vmid_start           = 4011
-template_version            = "1.1.0"
+template_version            = "2.0.0"
 
 kube_vip_address            = "192.168.0.44"
 kube_vip_hostname           = "k3s-prod.jnet.lan"

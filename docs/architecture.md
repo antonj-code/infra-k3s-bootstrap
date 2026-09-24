@@ -8,7 +8,7 @@ This document outlines the architecture, hardware layout, networking topology, O
 
 The infrastructure spans two Proxmox VE hypervisor hosts, split by role rather than by environment. `colossus` is the stronger host (faster CPU and memory), so it runs every worker - and with them all Longhorn storage - while `guardian` runs every control plane:
 - **STAGE (`guardian.jnet.lan` + `colossus.jnet.lan`)**: 3 control plane VMs on `guardian`, 3 worker VMs on `colossus`. VLAN `20` must be trunked between the two hosts, since node-to-node traffic (kubelet, Flannel host-gw) crosses it.
-- **PROD (`guardian.jnet.lan` + `colossus.jnet.lan`)**: 3 control plane VMs on `guardian`, 5 worker VMs on `colossus`. VLAN `30` must be trunked between the two hosts.
+- **PROD (`guardian.jnet.lan` + `colossus.jnet.lan`)**: 3 control plane VMs on `guardian`, 3 worker VMs on `colossus`. VLAN `30` must be trunked between the two hosts.
 
 > **Playground layout.** STAGE and PROD are both test environments, and this layout is chosen for the hardware available, not for resilience: losing `guardian` takes down both clusters' control planes, and losing `colossus` takes down both clusters' workers along with every Longhorn replica. A real production environment would distribute each role across hosts. See [Host Layout & Failure Domains](../README.md#host-layout--failure-domains) in the README.
 
@@ -38,12 +38,10 @@ All virtual machines are provisioned from a hardened AlmaLinux template, selecte
 +---------------------------------------------------------------------------------------------------+
 |  PROD CLUSTER (Control planes: guardian.jnet.lan / Workers: colossus.jnet.lan)                   |
 |                                                                                                   |
-|  Control Plane Nodes (HA Embedded etcd, N=3)           Worker Nodes (Workloads & Longhorn CSI, N=5)|
+|  Control Plane Nodes (HA Embedded etcd, N=3)           Worker Nodes (Workloads & Longhorn CSI, N=3)|
 |  • k3s-cp-p-XXXX (VM 4001, net1: 10.30.30.11)          • k3s-wk-p-AAAA (VM 4011, net1: 10.30.30.21)|
 |  • k3s-cp-p-YYYY (VM 4002, net1: 10.30.30.12)          • k3s-wk-p-BBBB (VM 4012, net1: 10.30.30.22)|
 |  • k3s-cp-p-ZZZZ (VM 4003, net1: 10.30.30.13)          • k3s-wk-p-CCCC (VM 4013, net1: 10.30.30.23)|
-|                                                        • k3s-wk-p-DDDD (VM 4014, net1: 10.30.30.24)|
-|                                                        • k3s-wk-p-EEEE (VM 4015, net1: 10.30.30.25)|
 |                                                                                                   |
 |  VIP: 192.168.0.44 (k3s-prod.jnet.lan)  | net0: DHCP (192.168.0.0/24) | net1: VLAN 30 (10.30.30.0/24) |
 +---------------------------------------------------------------------------------------------------+
@@ -65,7 +63,7 @@ All virtual machines are provisioned from a hardened AlmaLinux template, selecte
 | Node Prefix | Role | VM ID Range | Management IP (`net0`) | Internal VLAN 30 IP (`net1`) | vCPU | RAM | Root Disk | Data Disk (`scsi1`) | Mount Point & FS | Proxmox Host |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`k3s-cp-p-<rand>`** | Control Plane (x3) | `4001 - 4003` | DHCP (`192.168.0.x`) | `10.30.30.11 - 13` | 2 | 4096 MB | 32 GB | 20 GB | `/var/lib/rancher/k3s/server/db` (XFS, etcd) | `guardian` |
-| **`k3s-wk-p-<rand>`** | Worker / Storage (x5)| `4011 - 4015` | DHCP (`192.168.0.x`) | `10.30.30.21 - 25` | 6 | 8192 MB | 32 GB | 80 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
+| **`k3s-wk-p-<rand>`** | Worker / Storage (x3)| `4011 - 4013` | DHCP (`192.168.0.x`) | `10.30.30.21 - 23` | 6 | 8192 MB | 32 GB | 80 GB | `/mnt/storage-data01` (XFS, Longhorn) | `colossus` |
 
 ### A Note on CPU/Memory Drift
 

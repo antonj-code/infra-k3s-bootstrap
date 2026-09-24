@@ -141,5 +141,5 @@ The pipeline is split into modular downstream child pipelines for complete blast
    - **Promotion via Release Tag**: Pushing a version tag (e.g. `make promote TAG=v1.1.0` or `git tag v1.1.0 && git push origin v1.1.0`) automatically triggers the PROD child pipeline without manual clicking.
    - **Promotion via GitLab UI**: A one-click manual promotion button (`when: manual`) is always available in the pipeline graph on `main`.
    - **Promotion via Web Run**: Trigger directly by setting `TARGET_ENV=PROD` on the *Run Pipeline* page.
-   - Runs `seed` -> `plan` -> `apply` -> `configure` -> `verify` exclusively for PROD (control planes `4001-4003` on `guardian`, workers `4011-4015` on `colossus`).
+   - Runs `seed` -> `plan` -> `apply` -> `configure` -> `verify` exclusively for PROD (control planes `4001-4003` on `guardian`, workers `4011-4013` on `colossus`).
 

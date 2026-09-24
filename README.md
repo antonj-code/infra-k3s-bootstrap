@@ -19,7 +19,7 @@ flowchart TB
     subgraph Host2["Proxmox Host colossus - workers and Longhorn storage"]
         direction TB
         WK1["STAGE: 3x Workers<br/>k3s-wk-s-*<br/>VMs 3011-3013"]
-        WK2["PROD: 5x Workers<br/>k3s-wk-p-*<br/>VMs 4011-4015"]
+        WK2["PROD: 3x Workers<br/>k3s-wk-p-*<br/>VMs 4011-4013"]
     end
 
     subgraph Secrets["Vault Cluster (192.168.0.40:8200)"]
@@ -195,7 +195,7 @@ Push to `main` and STAGE runs automatically. PROD only runs when you promote it 
 2. **`plan`**: Builds and inspects the Terraform execution plan against GitLab-managed remote state.
 3. **`apply`**: Provisions the environment's VMs - control planes on `guardian`, workers on `colossus`.
 4. **`configure`**: Runs Ansible CIS hardening and K3s deployment (control plane, then workers).
-5. **`verify`**: Confirms all nodes report `Ready` (6/6 for STAGE, 8/8 for PROD).
+5. **`verify`**: Confirms all nodes report `Ready` (6/6 for both STAGE and PROD).
 
 ### 3. CLI Quick Start
 All Makefile targets accept `ENV=stage` (default) or `ENV=prod`:
