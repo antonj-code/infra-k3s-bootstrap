@@ -142,6 +142,7 @@ variable "template_registry" {
     "1.1.0" = 1000 # almalinux-9-cis2
     "1.2.0" = 1001 # almalinux-9-cis2
     "2.0.0" = 1002 # almalinux-10-cis1 (Level 1, unlike the AlmaLinux 9 images)
+    "2.1.0" = 1003 # almalinux-10-cis1
   }
 }
 

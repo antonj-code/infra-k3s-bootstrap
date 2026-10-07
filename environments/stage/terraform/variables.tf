@@ -85,6 +85,7 @@ variable "template_registry" {
     # Major bump because the OS release changes, not just the image build.
     # Note this one is CIS Level 1, unlike the Level 2 AlmaLinux 9 images.
     "2.0.0" = 1002 # almalinux-10-cis1
+    "2.1.0" = 1003 # almalinux-10-cis1
   }
 }
 variable "template_vm_id" {

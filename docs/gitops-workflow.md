@@ -19,7 +19,7 @@ Each environment is its own cluster, with its own VIP, internal VLAN, Terraform 
 | **Internal Cluster Network**| VLAN `20` (`10.20.20.0/24`) | VLAN `30` (`10.30.30.0/24`) |
 | **Terraform State Backend** | GitLab HTTP (`k3s-stage`) | GitLab HTTP (`k3s-prod`) |
 | **Vault Secrets Path** | `secret/data/k3s-stage/*` | `secret/data/k3s-prod/*` |
-| **Default Template Version**| `2.0.0` (AlmaLinux 10 CIS1, VM `1002`) | `2.0.0` (AlmaLinux 10 CIS1, VM `1002`) |
+| **Default Template Version**| `2.1.0` (AlmaLinux 10 CIS1, VM `1003`) | `2.1.0` (AlmaLinux 10 CIS1, VM `1003`) |
 
 ---
 
@@ -114,7 +114,7 @@ If a VM becomes corrupted, fails a hardware health check, or experiences kernel 
 ```
 [ Step 1: Workload Eviction ] ──► [ Step 2: Targeted Re-Clone ] ──► [ Step 3: Hardening & Join ] ──► [ Step 4: Verification ]
   • Drains active pods / etcd       • Terraform -replace on VM        • Formats XFS secondary disk     • Asserts cluster health
-  • Kubernetes shifts pods          • Clones fresh template v2.0.0    • Applies CIS sysctl settings    • Confirms Ready state
+  • Kubernetes shifts pods          • Clones fresh template v2.1.0    • Applies CIS sysctl settings    • Confirms Ready state
 ```
 
 - **Targeted Scope**: Terraform uses `-replace="module.k3s_nodes.proxmox_virtual_environment_vm.k3s_workers[INDEX]"` so the other 5 nodes in PROD are left running uninterrupted.
@@ -128,7 +128,7 @@ You can maintain different VM template versions between STAGE and PROD:
 1. **Test in STAGE**:
    - Update `template_version` to the new tag in [`environments/stage/terraform/terraform.tfvars`](../environments/stage/terraform/terraform.tfvars).
    - Run rolling repave: `make repave ENV=stage` (or `bash scripts/rolling_upgrade.sh --mode repave --env stage`).
-   - PROD remains untouched on `2.0.0`.
+   - PROD remains untouched on `2.1.0`.
 2. **Promote to PROD**:
    - Update `template_version` to the same tag in [`environments/prod/terraform/terraform.tfvars`](../environments/prod/terraform/terraform.tfvars).
    - Promote via tag: `make promote TAG=v1.2.0`.
